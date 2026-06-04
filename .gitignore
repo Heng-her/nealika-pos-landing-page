@@ -1,0 +1,18 @@
+# Node modules
+node_modules/
+
+# Git directory
+.git/
+
+# IDE configuration
+.idea/
+
+# macOS specific file
+.DS_Store
+
+# Bun lock file
+bun.lockb
+
+# Build directories
+dist/
+build/
