@@ -122,6 +122,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     phone: "+855 12 345 678",
     business: "Swift Salon",
     address: "Phnom Penh, Cambodia",
+    avatar: "", // empty by default, so it falls back to the company logo
   });
 
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -180,6 +181,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       phone: formData.get("phone") as string,
       business: formData.get("business") as string,
       address: formData.get("address") as string,
+      avatar: profile.avatar,
     });
     setIsEditingProfile(false);
   };
@@ -310,8 +312,20 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                 {!isEditingProfile ? (
                   <div className="space-y-4">
                     <div className="flex items-center gap-4 mb-6">
-                      <div className="w-20 h-20 bg-blue-600 rounded-full flex items-center justify-center text-white text-3xl font-bold">
-                        {profile.name.charAt(0)}
+                      <div className="w-20 h-20 bg-slate-50 border border-slate-200 rounded-full flex items-center justify-center overflow-hidden p-1 shadow-inner">
+                        {profile.avatar ? (
+                          <img
+                            src={profile.avatar}
+                            alt="Profile"
+                            className="w-full h-full object-cover rounded-full"
+                          />
+                        ) : (
+                          <img
+                            src={logo}
+                            alt="Company Logo"
+                            className="w-full h-full object-contain"
+                          />
+                        )}
                       </div>
                       <div>
                         <h3 className="text-xl font-semibold text-slate-900">
@@ -352,6 +366,71 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                   </div>
                 ) : (
                   <form onSubmit={handleUpdateProfile} className="space-y-4">
+                    {/* Avatar Upload */}
+                    <div className="border-b border-slate-100 pb-4 mb-4">
+                      <label className="block text-sm font-medium text-slate-700 mb-2">
+                        Profile Picture
+                      </label>
+                      <div className="flex items-center gap-4">
+                        <div className="w-16 h-16 bg-slate-50 border border-slate-200 rounded-full flex items-center justify-center overflow-hidden p-1 shadow-inner">
+                          {profile.avatar ? (
+                            <img
+                              src={profile.avatar}
+                              alt="Profile Preview"
+                              className="w-full h-full object-cover rounded-full"
+                            />
+                          ) : (
+                            <img
+                              src={logo}
+                              alt="Company Logo"
+                              className="w-full h-full object-contain"
+                            />
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            id="avatar-upload"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onloadend = () => {
+                                  setProfile((prev) => ({
+                                    ...prev,
+                                    avatar: reader.result as string,
+                                  }));
+                                };
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                          />
+                          <label
+                            htmlFor="avatar-upload"
+                            className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer text-center transition-colors"
+                          >
+                            Upload Photo
+                          </label>
+                          {profile.avatar && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setProfile((prev) => ({
+                                  ...prev,
+                                  avatar: "",
+                                }))
+                              }
+                              className="text-xs text-red-600 hover:text-red-800 text-left font-medium"
+                            >
+                              Remove (Restore Company Logo)
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="grid md:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-2">
