@@ -290,7 +290,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           </div>
 
           {/* Main Content */}
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-3 min-w-0">
             {/* Profile Tab */}
             {activeTab === "profile" && (
               <div className="bg-white rounded-xl shadow-sm p-6">
