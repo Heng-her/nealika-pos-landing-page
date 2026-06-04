@@ -1,52 +1,72 @@
-import { useState } from 'react';
-import { CreditCard, ArrowLeft, Send } from 'lucide-react';
-import logo from '@/imports/logo-nealika.png';
+import { useState } from "react";
+import { ArrowLeft, Send } from "lucide-react";
+import logo from "@/imports/logo-nealika.png";
+import {
+  getErrorMessage,
+  normalizePhoneNumber,
+  sendOtp,
+  verifyOtp,
+} from "../services/posApi";
 
 interface LoginPageProps {
   onBack: () => void;
   onLoginSuccess: () => void;
 }
 
-export default function LoginPage({ onBack, onLoginSuccess }: LoginPageProps) {
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [otp, setOtp] = useState('');
+export default function LoginPage({
+  onBack,
+  onLoginSuccess,
+}: LoginPageProps) {
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [otp, setOtp] = useState("");
   const [showOtpInput, setShowOtpInput] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [socialError, setSocialError] = useState("");
 
-  const handleSendOtp = (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    // Simulate OTP sending
-    setTimeout(() => {
+  const handleSendOtp = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setAuthError("");
+    setSocialError("");
+    setIsSendingOtp(true);
+
+    try {
+      await sendOtp(normalizePhoneNumber(phoneNumber));
       setShowOtpInput(true);
-      setIsLoading(false);
-    }, 1000);
+    } catch (error) {
+      setAuthError(getErrorMessage(error));
+    } finally {
+      setIsSendingOtp(false);
+    }
   };
 
-  const handleVerifyOtp = (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    // Simulate OTP verification
-    setTimeout(() => {
-      setIsLoading(false);
+  const handleVerifyOtp = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setAuthError("");
+    setSocialError("");
+    setIsVerifyingOtp(true);
+
+    try {
+      await verifyOtp(normalizePhoneNumber(phoneNumber), otp);
       onLoginSuccess();
-    }, 1000);
+    } catch (error) {
+      setAuthError(getErrorMessage(error));
+    } finally {
+      setIsVerifyingOtp(false);
+    }
   };
 
-  const handleGoogleLogin = () => {
-    // Implement Google OAuth
-    onLoginSuccess();
-  };
-
-  const handleTelegramLogin = () => {
-    // Implement Telegram OAuth
-    onLoginSuccess();
+  const handleSocialLoginUnavailable = (provider: "Google" | "Telegram") => {
+    setSocialError(
+      `${provider} login is not connected in the current backend yet. Please use mobile OTP.`,
+    );
+    setAuthError("");
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center px-4 py-8">
       <div className="w-full max-w-md">
-        {/* Back Button */}
         <button
           onClick={onBack}
           className="flex items-center gap-2 text-slate-600 hover:text-slate-900 mb-6 transition-colors"
@@ -55,20 +75,21 @@ export default function LoginPage({ onBack, onLoginSuccess }: LoginPageProps) {
           Back to Home
         </button>
 
-        {/* Login Card */}
         <div className="bg-white rounded-2xl shadow-xl p-8">
-          {/* Header */}
           <div className="text-center mb-8">
             <div className="flex items-center justify-center mb-4">
               <img src={logo} alt="Nealika" className="h-12" />
             </div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-2">Welcome Back</h2>
+            <h2 className="text-2xl font-bold text-slate-900 mb-2">
+              Welcome Back
+            </h2>
             <p className="text-slate-600">Sign in to your account</p>
           </div>
 
-          {/* Phone Number Login */}
           <div className="mb-6">
-            <h3 className="text-sm font-semibold text-slate-700 mb-3">Login with Phone Number</h3>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">
+              Login with Phone Number
+            </h3>
             {!showOtpInput ? (
               <form onSubmit={handleSendOtp}>
                 <div className="mb-4">
@@ -82,7 +103,9 @@ export default function LoginPage({ onBack, onLoginSuccess }: LoginPageProps) {
                     <input
                       type="tel"
                       value={phoneNumber}
-                      onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
+                      onChange={(event) =>
+                        setPhoneNumber(event.target.value.replace(/\D/g, ""))
+                      }
                       placeholder="12 345 678"
                       className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       maxLength={9}
@@ -92,11 +115,11 @@ export default function LoginPage({ onBack, onLoginSuccess }: LoginPageProps) {
                 </div>
                 <button
                   type="submit"
-                  disabled={phoneNumber.length < 8 || isLoading}
+                  disabled={phoneNumber.length < 8 || isSendingOtp}
                   className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
-                  {isLoading ? (
-                    'Sending...'
+                  {isSendingOtp ? (
+                    "Sending..."
                   ) : (
                     <>
                       <Send className="w-4 h-4" />
@@ -114,7 +137,9 @@ export default function LoginPage({ onBack, onLoginSuccess }: LoginPageProps) {
                   <input
                     type="text"
                     value={otp}
-                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+                    onChange={(event) =>
+                      setOtp(event.target.value.replace(/\D/g, ""))
+                    }
                     placeholder="123456"
                     className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center text-2xl tracking-widest"
                     maxLength={6}
@@ -126,16 +151,17 @@ export default function LoginPage({ onBack, onLoginSuccess }: LoginPageProps) {
                 </div>
                 <button
                   type="submit"
-                  disabled={otp.length < 6 || isLoading}
+                  disabled={otp.length < 6 || isVerifyingOtp}
                   className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed mb-2"
                 >
-                  {isLoading ? 'Verifying...' : 'Verify & Login'}
+                  {isVerifyingOtp ? "Verifying..." : "Verify & Login"}
                 </button>
                 <button
                   type="button"
                   onClick={() => {
                     setShowOtpInput(false);
-                    setOtp('');
+                    setOtp("");
+                    setAuthError("");
                   }}
                   className="w-full px-4 py-2 text-blue-600 hover:text-blue-700 font-medium transition-colors"
                 >
@@ -143,24 +169,28 @@ export default function LoginPage({ onBack, onLoginSuccess }: LoginPageProps) {
                 </button>
               </form>
             )}
+
+            {authError ? (
+              <p className="text-sm text-red-600 mt-3">{authError}</p>
+            ) : null}
           </div>
 
-          {/* Divider */}
           <div className="relative my-6">
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-slate-300"></div>
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-4 bg-white text-slate-500">Or continue with</span>
+              <span className="px-4 bg-white text-slate-500">
+                Or continue with
+              </span>
             </div>
           </div>
 
-          {/* Social Login Buttons */}
           <div className="space-y-3">
-            {/* Google Login */}
             <button
-              onClick={handleGoogleLogin}
+              onClick={() => handleSocialLoginUnavailable("Google")}
               className="w-full px-4 py-3 border-2 border-slate-300 rounded-lg font-medium text-slate-700 hover:bg-slate-50 transition-colors flex items-center justify-center gap-3"
+              type="button"
             >
               <svg className="w-5 h-5" viewBox="0 0 24 24">
                 <path
@@ -183,25 +213,28 @@ export default function LoginPage({ onBack, onLoginSuccess }: LoginPageProps) {
               Continue with Google
             </button>
 
-            {/* Telegram Login */}
             <button
-              onClick={handleTelegramLogin}
+              onClick={() => handleSocialLoginUnavailable("Telegram")}
               className="w-full px-4 py-3 bg-[#0088cc] text-white rounded-lg font-medium hover:bg-[#006ba3] transition-colors flex items-center justify-center gap-3"
+              type="button"
             >
               <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z" />
               </svg>
               Continue with Telegram
             </button>
           </div>
 
-          {/* Terms */}
+          {socialError ? (
+            <p className="text-sm text-amber-700 mt-4">{socialError}</p>
+          ) : null}
+
           <p className="text-xs text-slate-500 text-center mt-6">
-            By continuing, you agree to our{' '}
+            By continuing, you agree to our{" "}
             <a href="#" className="text-blue-600 hover:underline">
               Terms of Service
-            </a>{' '}
-            and{' '}
+            </a>{" "}
+            and{" "}
             <a href="#" className="text-blue-600 hover:underline">
               Privacy Policy
             </a>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Check,
   Copy,
@@ -11,177 +11,247 @@ import {
   User,
   Wallet,
 } from "lucide-react";
-import PaymentPage from "./PaymentPage";
-import CheckoutPage from "./CheckoutPage";
 import logo from "@/imports/logo-nealika.png";
+import CheckoutPage from "./CheckoutPage";
+import PaymentPage from "./PaymentPage";
+import {
+  clearStoredAuthToken,
+  getCurrentSubscription,
+  getErrorMessage,
+  getPackages,
+  getProfile,
+  mapPackageToDisplayPackage,
+  updateProfile,
+  type CurrentSubscription,
+  type DisplayPackage,
+  type UserProfile,
+} from "../services/posApi";
 
 interface DashboardProps {
   onLogout: () => void;
 }
 
-interface Service {
-  id: number;
+interface ProfileFormState {
   name: string;
-  description: string;
-  price: number;
-  period: string;
-  features: string[];
-  maxRegisters: string;
-  category: string;
+  email: string;
+  phone: string;
+  business: string;
+  address: string;
+}
+
+function toProfileForm(profile?: UserProfile | null): ProfileFormState {
+  return {
+    name: profile?.name || "",
+    email: profile?.email || "",
+    phone: profile?.phone || "",
+    business: profile?.business_name || "",
+    address: profile?.address || "",
+  };
+}
+
+function formatDateValue(value?: string | null) {
+  if (!value) {
+    return "-";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+function formatDurationLabel(months?: number) {
+  if (!months) {
+    return "-";
+  }
+
+  if (months === 1) {
+    return "1 month";
+  }
+
+  return `${months} months`;
 }
 
 export default function Dashboard({ onLogout }: DashboardProps) {
   const [activeTab, setActiveTab] = useState<
     "profile" | "services" | "payments" | "access"
   >("profile");
-  const [checkoutPackage, setCheckoutPackage] = useState<Service | null>(null);
-  const [services] = useState<Service[]>([
-    {
-      id: 1,
-      name: "Starter Package",
-      description: "Perfect for small businesses just getting started",
-      price: 29,
-      period: "/month",
-      maxRegisters: "Up to 1 register",
-      category: "POS Service",
-      features: [
-        "Basic inventory management",
-        "Sales reporting",
-        "Email support",
-        "Mobile app access",
-        "Payment processing",
-      ],
-    },
-    {
-      id: 2,
-      name: "Professional Package",
-      description: "Ideal for growing businesses with multiple locations",
-      price: 79,
-      period: "/month",
-      maxRegisters: "Up to 5 registers",
-      category: "POS Service",
-      features: [
-        "Advanced inventory management",
-        "Advanced analytics & reports",
-        "Priority support 24/7",
-        "Employee management",
-        "Customer loyalty program",
-        "Multi-location support",
-        "API access",
-      ],
-    },
-    {
-      id: 3,
-      name: "Enterprise Package",
-      description: "Complete solution for large-scale operations",
-      price: 199,
-      period: "/month",
-      maxRegisters: "Unlimited registers",
-      category: "POS Service",
-      features: [
-        "Enterprise inventory system",
-        "Custom reports & dashboards",
-        "Dedicated account manager",
-        "Advanced security features",
-        "Custom integrations",
-        "White-label options",
-        "Advanced fraud protection",
-        "On-premise deployment option",
-      ],
-    },
-  ]);
-
-  const [subscribedPackageId, setSubscribedPackageId] = useState<number | null>(
-    1,
-  ); // User is subscribed to Starter by default
+  const [checkoutPackage, setCheckoutPackage] = useState<DisplayPackage | null>(
+    null,
+  );
+  const [services, setServices] = useState<DisplayPackage[]>([]);
   const [selectedServiceDetail, setSelectedServiceDetail] =
-    useState<Service | null>(null);
-
-  // Subscription details
-  const [subscriptionDetails] = useState({
-    subscribedDate: "2026-04-07",
-    duration: "1 month",
-    expiryDate: "2026-05-07",
-    autoRenew: true,
-  });
-
-  // Access Info State
+    useState<DisplayPackage | null>(null);
+  const [currentSubscription, setCurrentSubscription] =
+    useState<CurrentSubscription | null>(null);
+  const [profile, setProfile] = useState<ProfileFormState>(
+    toProfileForm(null),
+  );
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const [profileSuccessMessage, setProfileSuccessMessage] = useState("");
+  const [packagesError, setPackagesError] = useState("");
+  const [subscriptionError, setSubscriptionError] = useState("");
+  const [isLoadingPackages, setIsLoadingPackages] = useState(true);
+  const [isLoadingSubscription, setIsLoadingSubscription] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [accessInfo] = useState({
-    posUrl: "https://username.nealika.io/nealika.php",
-    username: "nealika",
-    password: "SecurePass123!@#",
-    email: "info@nealika.com",
-  });
+  const [paymentsRefreshKey, setPaymentsRefreshKey] = useState(0);
 
-  // Profile data
-  const [profile, setProfile] = useState({
-    name: "John Doe",
-    email: "john.doe@example.com",
-    phone: "+855 12 345 678",
-    business: "Swift Salon",
-    address: "Phnom Penh, Cambodia",
-  });
+  const subscribedPackageId = currentSubscription?.package_id || null;
 
-  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const accessInfo = useMemo(() => {
+    return {
+      posUrl: currentSubscription
+        ? "Provisioned after POS access API is connected"
+        : "No active subscription",
+      username: currentSubscription ? "Provisioning" : "Not available",
+      password: "********",
+      email: profile.email || "Not available",
+    };
+  }, [currentSubscription, profile.email]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadDashboardData = async () => {
+      setIsLoadingPackages(true);
+      setIsLoadingSubscription(true);
+      setIsLoadingProfile(true);
+      setPackagesError("");
+      setSubscriptionError("");
+      setProfileError("");
+
+      const [packagesResult, profileResult, subscriptionResult] =
+        await Promise.allSettled([
+          getPackages(),
+          getProfile(),
+          getCurrentSubscription(),
+        ]);
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (packagesResult.status === "fulfilled") {
+        setServices(packagesResult.value.map(mapPackageToDisplayPackage));
+      } else {
+        const message = getErrorMessage(packagesResult.reason);
+        setPackagesError(message);
+      }
+
+      if (profileResult.status === "fulfilled") {
+        setProfile(toProfileForm(profileResult.value));
+      } else {
+        const message = getErrorMessage(profileResult.reason);
+        setProfileError(message);
+      }
+
+      if (subscriptionResult.status === "fulfilled") {
+        setCurrentSubscription(subscriptionResult.value);
+      } else {
+        const message = getErrorMessage(subscriptionResult.reason);
+        setSubscriptionError(message);
+      }
+
+      setIsLoadingPackages(false);
+      setIsLoadingSubscription(false);
+      setIsLoadingProfile(false);
+    };
+
+    loadDashboardData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleSubscribe = (packageId: number) => {
-    const selectedPackage = services.find((s) => s.id === packageId);
+    const selectedPackage = services.find((service) => service.id === packageId);
     if (selectedPackage) {
       setCheckoutPackage(selectedPackage);
     }
   };
 
   const handleUnsubscribe = () => {
-    const packageName = services.find(
-      (s) => s.id === subscribedPackageId,
-    )?.name;
-    if (confirm(`Are you sure you want to unsubscribe from ${packageName}?`)) {
-      setSubscribedPackageId(null);
-      alert("Successfully unsubscribed!");
-    }
+    alert(
+      "Subscription cancellation is not connected in the current backend yet.",
+    );
   };
 
   const handleUpgrade = (newPackageId: number) => {
-    const selectedPackage = services.find((s) => s.id === newPackageId);
+    const selectedPackage = services.find((service) => service.id === newPackageId);
     if (selectedPackage) {
       setCheckoutPackage(selectedPackage);
     }
   };
 
-  const handleCheckoutComplete = () => {
-    if (checkoutPackage) {
-      const isUpgrade =
-        subscribedPackageId && checkoutPackage.id > subscribedPackageId;
-      const isDowngrade =
-        subscribedPackageId && checkoutPackage.id < subscribedPackageId;
-      const actionText = isUpgrade
-        ? "upgraded"
-        : isDowngrade
-          ? "downgraded"
-          : "subscribed";
+  const refreshDashboardData = async () => {
+    setPackagesError("");
+    setSubscriptionError("");
+    setProfileError("");
 
-      setSubscribedPackageId(checkoutPackage.id);
-      setCheckoutPackage(null);
-      setActiveTab("services");
-      alert(
-        `Payment successful! You have ${actionText} to ${checkoutPackage.name}.`,
-      );
+    try {
+      const [packages, latestProfile, subscription] = await Promise.all([
+        getPackages(),
+        getProfile(),
+        getCurrentSubscription(),
+      ]);
+
+      setServices(packages.map(mapPackageToDisplayPackage));
+      setProfile(toProfileForm(latestProfile));
+      setCurrentSubscription(subscription);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setPackagesError(message);
+      setSubscriptionError(message);
+      setProfileError(message);
     }
   };
 
-  const handleUpdateProfile = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    setProfile({
-      name: formData.get("name") as string,
-      email: formData.get("email") as string,
-      phone: formData.get("phone") as string,
-      business: formData.get("business") as string,
-      address: formData.get("address") as string,
-    });
-    setIsEditingProfile(false);
+  const handleCheckoutComplete = async () => {
+    setCheckoutPackage(null);
+    setSelectedServiceDetail(null);
+    setActiveTab("services");
+    setPaymentsRefreshKey((currentValue) => currentValue + 1);
+    await refreshDashboardData();
+  };
+
+  const handleUpdateProfile = async (
+    event: React.FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+
+    setIsSavingProfile(true);
+    setProfileError("");
+    setProfileSuccessMessage("");
+
+    try {
+      const updatedProfile = await updateProfile({
+        name: String(formData.get("name") || ""),
+        email: String(formData.get("email") || ""),
+        phone: String(formData.get("phone") || ""),
+        business_name: String(formData.get("business") || ""),
+        address: String(formData.get("address") || ""),
+      });
+
+      setProfile(toProfileForm(updatedProfile));
+      setProfileSuccessMessage("Profile updated successfully.");
+      setIsEditingProfile(false);
+    } catch (error) {
+      setProfileError(getErrorMessage(error));
+    } finally {
+      setIsSavingProfile(false);
+    }
   };
 
   const handleCopyToClipboard = (text: string, field: string) => {
@@ -190,21 +260,15 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  // Show checkout page if a package is selected for checkout
-  if (checkoutPackage) {
-    const packagesForCheckout = services.map((s) => ({
-      id: s.id,
-      name: s.name,
-      price: s.price,
-      period: s.period,
-      description: s.description,
-      features: s.features,
-      highlighted: s.id === 2,
-    }));
+  const handleDashboardLogout = () => {
+    clearStoredAuthToken();
+    onLogout();
+  };
 
+  if (checkoutPackage) {
     return (
       <CheckoutPage
-        packages={packagesForCheckout}
+        packages={services}
         defaultPackageId={checkoutPackage.id}
         currentPackageId={subscribedPackageId}
         onBack={() => setCheckoutPackage(null)}
@@ -215,7 +279,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Header */}
       <header className="bg-white border-b sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
@@ -223,7 +286,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               <img src={logo} alt="Nealika" className="h-10" />
             </div>
             <button
-              onClick={onLogout}
+              onClick={handleDashboardLogout}
               className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
             >
               <LogOut className="w-5 h-5" />
@@ -235,7 +298,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid lg:grid-cols-4 gap-8">
-          {/* Sidebar */}
           <div className="lg:col-span-1">
             <div className="bg-white rounded-xl shadow-sm p-4 sticky top-24">
               <nav className="space-y-2">
@@ -287,9 +349,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
             </div>
           </div>
 
-          {/* Main Content */}
           <div className="lg:col-span-3">
-            {/* Profile Tab */}
             {activeTab === "profile" && (
               <div className="bg-white rounded-xl shadow-sm p-6">
                 <div className="flex items-center justify-between mb-6">
@@ -307,17 +367,41 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                   )}
                 </div>
 
-                {!isEditingProfile ? (
+                {profileError ? (
+                  <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+                    {profileError}
+                  </div>
+                ) : null}
+
+                {profileSuccessMessage ? (
+                  <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-4 text-green-700">
+                    {profileSuccessMessage}
+                  </div>
+                ) : null}
+
+                {isLoadingProfile ? (
+                  <div className="space-y-4">
+                    <div className="h-20 w-20 rounded-full bg-slate-200 animate-pulse"></div>
+                    {Array.from({ length: 4 }).map((_, index) => (
+                      <div
+                        key={index}
+                        className="h-5 rounded bg-slate-200 animate-pulse"
+                      ></div>
+                    ))}
+                  </div>
+                ) : !isEditingProfile ? (
                   <div className="space-y-4">
                     <div className="flex items-center gap-4 mb-6">
                       <div className="w-20 h-20 bg-blue-600 rounded-full flex items-center justify-center text-white text-3xl font-bold">
-                        {profile.name.charAt(0)}
+                        {(profile.name || "?").charAt(0).toUpperCase()}
                       </div>
                       <div>
                         <h3 className="text-xl font-semibold text-slate-900">
-                          {profile.name}
+                          {profile.name || "No name"}
                         </h3>
-                        <p className="text-slate-600">{profile.business}</p>
+                        <p className="text-slate-600">
+                          {profile.business || "No business name"}
+                        </p>
                       </div>
                     </div>
 
@@ -326,27 +410,33 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                         <label className="text-sm font-medium text-slate-500">
                           Email
                         </label>
-                        <p className="text-slate-900 mt-1">{profile.email}</p>
+                        <p className="text-slate-900 mt-1">
+                          {profile.email || "-"}
+                        </p>
                       </div>
                       <div>
                         <label className="text-sm font-medium text-slate-500">
                           Phone
                         </label>
-                        <p className="text-slate-900 mt-1">{profile.phone}</p>
+                        <p className="text-slate-900 mt-1">
+                          {profile.phone || "-"}
+                        </p>
                       </div>
                       <div>
                         <label className="text-sm font-medium text-slate-500">
                           Business Name
                         </label>
                         <p className="text-slate-900 mt-1">
-                          {profile.business}
+                          {profile.business || "-"}
                         </p>
                       </div>
                       <div>
                         <label className="text-sm font-medium text-slate-500">
                           Address
                         </label>
-                        <p className="text-slate-900 mt-1">{profile.address}</p>
+                        <p className="text-slate-900 mt-1">
+                          {profile.address || "-"}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -417,13 +507,17 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                     <div className="flex gap-3">
                       <button
                         type="submit"
-                        className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                        disabled={isSavingProfile}
+                        className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-slate-300"
                       >
-                        Save Changes
+                        {isSavingProfile ? "Saving..." : "Save Changes"}
                       </button>
                       <button
                         type="button"
-                        onClick={() => setIsEditingProfile(false)}
+                        onClick={() => {
+                          setIsEditingProfile(false);
+                          setProfileSuccessMessage("");
+                        }}
                         className="px-6 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors"
                       >
                         Cancel
@@ -434,20 +528,35 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               </div>
             )}
 
-            {/* Services Tab */}
             {activeTab === "services" && (
               <div className="space-y-6">
                 {!selectedServiceDetail ? (
                   <div className="space-y-6">
-                    {/* Subscription Details Card */}
-                    {subscribedPackageId && (
+                    {subscriptionError ? (
+                      <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+                        {subscriptionError}
+                      </div>
+                    ) : null}
+
+                    {isLoadingSubscription ? (
+                      <div className="bg-white rounded-xl shadow-sm p-6">
+                        <div className="space-y-4">
+                          {Array.from({ length: 5 }).map((_, index) => (
+                            <div
+                              key={index}
+                              className="h-5 rounded bg-slate-200 animate-pulse"
+                            ></div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : currentSubscription ? (
                       <div className="bg-white rounded-xl shadow-sm p-6">
                         <div className="flex items-center justify-between mb-4">
                           <h3 className="text-xl font-bold text-slate-900">
                             Current Subscription
                           </h3>
                           <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-semibold">
-                            Active
+                            {currentSubscription.status || "Active"}
                           </span>
                         </div>
 
@@ -457,11 +566,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                               Package
                             </p>
                             <p className="text-lg font-semibold text-slate-900">
-                              {
-                                services.find(
-                                  (s) => s.id === subscribedPackageId,
-                                )?.name
-                              }
+                              {currentSubscription.package_name || "-"}
                             </p>
                           </div>
                           <div>
@@ -469,13 +574,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                               Subscribe Date
                             </p>
                             <p className="text-lg font-semibold text-slate-900">
-                              {new Date(
-                                subscriptionDetails.subscribedDate,
-                              ).toLocaleDateString("en-US", {
-                                year: "numeric",
-                                month: "long",
-                                day: "numeric",
-                              })}
+                              {formatDateValue(currentSubscription.start_date)}
                             </p>
                           </div>
                           <div>
@@ -483,7 +582,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                               Duration
                             </p>
                             <p className="text-lg font-semibold text-slate-900">
-                              {subscriptionDetails.duration}
+                              {formatDurationLabel(
+                                currentSubscription.duration_months,
+                              )}
                             </p>
                           </div>
                           <div>
@@ -491,66 +592,29 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                               Expiry Date
                             </p>
                             <p className="text-lg font-semibold text-slate-900">
-                              {new Date(
-                                subscriptionDetails.expiryDate,
-                              ).toLocaleDateString("en-US", {
-                                year: "numeric",
-                                month: "long",
-                                day: "numeric",
-                              })}
+                              {formatDateValue(currentSubscription.expire_date)}
                             </p>
                           </div>
                         </div>
 
-                        {/* <div className="mt-6 pt-6 border-t border-slate-200">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-sm font-medium text-slate-900">
-                                Auto-Renew
-                              </p>
-                              <p className="text-sm text-slate-600">
-                                {subscriptionDetails.autoRenew
-                                  ? "Your subscription will automatically renew on expiry date"
-                                  : "Auto-renewal is disabled"}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={`text-sm font-medium ${subscriptionDetails.autoRenew ? "text-green-600" : "text-slate-600"}`}
-                              >
-                                {subscriptionDetails.autoRenew ? "ON" : "OFF"}
-                              </span>
-                              <button
-                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                                  subscriptionDetails.autoRenew
-                                    ? "bg-green-600"
-                                    : "bg-slate-300"
-                                }`}
-                              >
-                                <span
-                                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                                    subscriptionDetails.autoRenew
-                                      ? "translate-x-6"
-                                      : "translate-x-1"
-                                  }`}
-                                />
-                              </button>
-                            </div>
-                          </div>
-                        </div> */}
-
                         <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                           <p className="text-sm text-blue-900">
                             <strong>Next billing date:</strong>{" "}
-                            {new Date(
-                              subscriptionDetails.expiryDate,
-                            ).toLocaleDateString("en-US", {
-                              year: "numeric",
-                              month: "long",
-                              day: "numeric",
-                            })}
+                            {formatDateValue(
+                              currentSubscription.next_billing_date ||
+                                currentSubscription.expire_date,
+                            )}
                           </p>
                         </div>
+                      </div>
+                    ) : (
+                      <div className="bg-white rounded-xl shadow-sm p-6">
+                        <h3 className="text-xl font-bold text-slate-900 mb-2">
+                          Current Subscription
+                        </h3>
+                        <p className="text-slate-600">
+                          No active subscription found.
+                        </p>
                       </div>
                     )}
 
@@ -564,121 +628,121 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                         </p>
                       </div>
 
-                      {/* Services List */}
-                      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {services.map((service) => {
-                          const isSubscribed =
-                            service.id === subscribedPackageId;
-                          const canUpgrade =
-                            subscribedPackageId &&
-                            service.id > subscribedPackageId;
-                          const canDowngrade =
-                            subscribedPackageId &&
-                            service.id < subscribedPackageId;
-
-                          return (
+                      {packagesError ? (
+                        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+                          {packagesError}
+                        </div>
+                      ) : isLoadingPackages ? (
+                        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {Array.from({ length: 3 }).map((_, index) => (
                             <div
-                              key={service.id}
-                              onClick={() => setSelectedServiceDetail(service)}
-                              className={`border-2 rounded-xl p-6 hover:shadow-lg transition-all cursor-pointer relative ${
-                                isSubscribed
-                                  ? "border-green-600 bg-green-50"
-                                  : service.name === "Professional Package"
-                                    ? "border-blue-600 bg-blue-50"
-                                    : "border-slate-200 bg-white"
-                              }`}
-                            >
-                              <div className="flex gap-2 mb-3">
-                                {service.name === "Professional Package" &&
-                                  !isSubscribed && (
+                              key={index}
+                              className="h-72 rounded-xl bg-slate-100 animate-pulse"
+                            ></div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {services.map((service) => {
+                            const isSubscribed = service.id === subscribedPackageId;
+                            const canUpgrade =
+                              Boolean(subscribedPackageId) &&
+                              service.id > (subscribedPackageId || 0);
+
+                            return (
+                              <div
+                                key={service.id}
+                                onClick={() => setSelectedServiceDetail(service)}
+                                className={`border-2 rounded-xl p-6 hover:shadow-lg transition-all cursor-pointer relative ${
+                                  isSubscribed
+                                    ? "border-green-600 bg-green-50"
+                                    : service.highlighted
+                                      ? "border-blue-600 bg-blue-50"
+                                      : "border-slate-200 bg-white"
+                                }`}
+                              >
+                                <div className="flex gap-2 mb-3">
+                                  {service.highlighted && !isSubscribed ? (
                                     <span className="inline-block px-3 py-1 bg-blue-600 text-white text-xs font-semibold rounded-full">
                                       Most Popular
                                     </span>
-                                  )}
-                                {isSubscribed && (
-                                  <span className="inline-block px-3 py-1 bg-green-600 text-white text-xs font-semibold rounded-full">
-                                    Active
+                                  ) : null}
+                                  {isSubscribed ? (
+                                    <span className="inline-block px-3 py-1 bg-green-600 text-white text-xs font-semibold rounded-full">
+                                      Active
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <h3 className="text-xl font-bold text-slate-900 mb-2">
+                                  {service.name}
+                                </h3>
+                                <div className="mb-3">
+                                  <span className="text-3xl font-bold text-slate-900">
+                                    ${service.price}
                                   </span>
-                                )}
-                              </div>
-                              <h3 className="text-xl font-bold text-slate-900 mb-2">
-                                {service.name}
-                              </h3>
-                              <div className="mb-3">
-                                <span className="text-3xl font-bold text-slate-900">
-                                  ${service.price}
-                                </span>
-                                <span className="text-slate-600">
-                                  {service.period}
-                                </span>
-                              </div>
-                              <p className="text-slate-600 text-sm mb-4">
-                                {service.description}
-                              </p>
-                              <div className="mb-4">
-                                <p className="text-sm font-medium text-slate-700">
-                                  {service.maxRegisters}
+                                  <span className="text-slate-600">
+                                    {service.period}
+                                  </span>
+                                </div>
+                                <p className="text-slate-600 text-sm mb-4">
+                                  {service.description}
                                 </p>
-                              </div>
-                              <div className="pt-3 border-t border-slate-200">
-                                {isSubscribed ? (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleUnsubscribe();
-                                    }}
-                                    className="w-full px-3 py-2 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors font-medium"
-                                  >
-                                    Unsubscribe
-                                  </button>
-                                ) : subscribedPackageId ? (
-                                  canUpgrade ? (
+                                <div className="mb-4">
+                                  <p className="text-sm font-medium text-slate-700">
+                                    {service.maxRegisters}
+                                  </p>
+                                </div>
+                                <div className="pt-3 border-t border-slate-200">
+                                  {isSubscribed ? (
                                     <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        handleUnsubscribe();
+                                      }}
+                                      className="w-full px-3 py-2 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors font-medium"
+                                    >
+                                      Unsubscribe
+                                    </button>
+                                  ) : subscribedPackageId ? (
+                                    <button
+                                      onClick={(event) => {
+                                        event.stopPropagation();
                                         handleUpgrade(service.id);
                                       }}
-                                      className="w-full px-3 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors font-medium"
+                                      className={`w-full px-3 py-2 text-sm rounded-lg transition-colors font-medium ${
+                                        canUpgrade
+                                          ? "text-white bg-blue-600 hover:bg-blue-700"
+                                          : "text-slate-600 bg-slate-100 hover:bg-slate-200"
+                                      }`}
                                     >
-                                      Upgrade
+                                      {canUpgrade ? "Upgrade" : "Downgrade"}
                                     </button>
                                   ) : (
                                     <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleUpgrade(service.id);
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        handleSubscribe(service.id);
                                       }}
-                                      className="w-full px-3 py-2 text-sm text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors font-medium"
+                                      className="w-full px-3 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors font-medium"
                                     >
-                                      Downgrade
+                                      Subscribe
                                     </button>
-                                  )
-                                ) : (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleSubscribe(service.id);
-                                    }}
-                                    className="w-full px-3 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors font-medium"
-                                  >
-                                    Subscribe
-                                  </button>
-                                )}
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : (
-                  /* Package Detail View */
                   <div className="bg-white rounded-xl shadow-sm p-6">
                     <button
                       onClick={() => setSelectedServiceDetail(null)}
                       className="flex items-center gap-2 text-slate-600 hover:text-slate-900 mb-6 transition-colors"
                     >
-                      ← Back to Packages
+                      Back to Packages
                     </button>
 
                     <div className="mb-6">
@@ -691,12 +755,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                             {selectedServiceDetail.description}
                           </p>
                         </div>
-                        {selectedServiceDetail.id === subscribedPackageId && (
+                        {selectedServiceDetail.id === subscribedPackageId ? (
                           <span className="px-4 py-2 bg-green-100 text-green-700 rounded-full text-sm font-semibold flex items-center gap-2">
                             <Check className="w-4 h-4" />
                             Active Subscription
                           </span>
-                        )}
+                        ) : null}
                       </div>
                     </div>
 
@@ -731,14 +795,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                         Package Features
                       </h3>
                       <div className="grid md:grid-cols-2 gap-3">
-                        {selectedServiceDetail.features.map(
-                          (feature, index) => (
-                            <div key={index} className="flex items-start gap-2">
-                              <Check className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                              <span className="text-slate-700">{feature}</span>
-                            </div>
-                          ),
-                        )}
+                        {selectedServiceDetail.features.map((feature, index) => (
+                          <div key={index} className="flex items-start gap-2">
+                            <Check className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                            <span className="text-slate-700">{feature}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
 
@@ -768,14 +830,15 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                             Status
                           </p>
                           <span className="inline-block px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-medium mt-1">
-                            Active
+                            {selectedServiceDetail.id === subscribedPackageId
+                              ? currentSubscription?.status || "Active"
+                              : "Available"}
                           </span>
                         </div>
                       </div>
                     </div>
 
-                    {/* Subscription Details if this is the current package */}
-                    {selectedServiceDetail.id === subscribedPackageId && (
+                    {selectedServiceDetail.id === subscribedPackageId ? (
                       <div className="border-t pt-6 mt-6">
                         <h3 className="text-xl font-bold text-slate-900 mb-4">
                           Subscription Details
@@ -786,13 +849,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                               Subscribe Date
                             </p>
                             <p className="text-slate-900 mt-1">
-                              {new Date(
-                                subscriptionDetails.subscribedDate,
-                              ).toLocaleDateString("en-US", {
-                                year: "numeric",
-                                month: "long",
-                                day: "numeric",
-                              })}
+                              {formatDateValue(currentSubscription?.start_date)}
                             </p>
                           </div>
                           <div>
@@ -800,7 +857,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                               Duration
                             </p>
                             <p className="text-slate-900 mt-1">
-                              {subscriptionDetails.duration}
+                              {formatDurationLabel(
+                                currentSubscription?.duration_months,
+                              )}
                             </p>
                           </div>
                           <div>
@@ -808,13 +867,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                               Expiry Date
                             </p>
                             <p className="text-slate-900 mt-1">
-                              {new Date(
-                                subscriptionDetails.expiryDate,
-                              ).toLocaleDateString("en-US", {
-                                year: "numeric",
-                                month: "long",
-                                day: "numeric",
-                              })}
+                              {formatDateValue(currentSubscription?.expire_date)}
                             </p>
                           </div>
                           <div>
@@ -822,14 +875,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                               Auto-Renew
                             </p>
                             <p className="text-slate-900 mt-1">
-                              {subscriptionDetails.autoRenew
-                                ? "Enabled"
-                                : "Disabled"}
+                              {currentSubscription?.auto_renew ? "Enabled" : "Disabled"}
                             </p>
                           </div>
                         </div>
                       </div>
-                    )}
+                    ) : null}
 
                     <div className="mt-8">
                       {selectedServiceDetail.id === subscribedPackageId ? (
@@ -873,7 +924,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               </div>
             )}
 
-            {/* Access Info Tab */}
             {activeTab === "access" && (
               <div className="bg-white rounded-xl shadow-sm p-6">
                 <div className="mb-6">
@@ -886,7 +936,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                 </div>
 
                 <div className="space-y-4">
-                  {/* POS URL */}
                   <div className="border border-slate-200 rounded-lg p-4">
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-sm font-medium text-slate-500">
@@ -918,18 +967,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                         readOnly
                         className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono text-sm"
                       />
-                      <a
-                        href={accessInfo.posUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                      >
-                        Open
-                      </a>
                     </div>
                   </div>
 
-                  {/* Username */}
                   <div className="border border-slate-200 rounded-lg p-4">
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-sm font-medium text-slate-500">
@@ -962,7 +1002,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                     />
                   </div>
 
-                  {/* Password */}
                   <div className="border border-slate-200 rounded-lg p-4">
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-sm font-medium text-slate-500">
@@ -987,10 +1026,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                         </button>
                         <button
                           onClick={() =>
-                            handleCopyToClipboard(
-                              accessInfo.password,
-                              "password",
-                            )
+                            handleCopyToClipboard(accessInfo.password, "password")
                           }
                           className="flex items-center gap-1 text-blue-600 hover:text-blue-700 text-sm"
                         >
@@ -1016,7 +1052,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                     />
                   </div>
 
-                  {/* Email */}
                   <div className="border border-slate-200 rounded-lg p-4">
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-sm font-medium text-slate-500">
@@ -1052,15 +1087,15 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
                 <div className="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
                   <div className="flex gap-3">
-                    <div className="text-amber-600 mt-0.5">⚠️</div>
+                    <div className="text-amber-600 mt-0.5">!</div>
                     <div>
                       <p className="font-medium text-amber-900 mb-1">
                         Security Notice
                       </p>
                       <p className="text-sm text-amber-800">
-                        Keep your credentials secure and do not share them with
-                        unauthorized users. Change your password regularly for
-                        enhanced security.
+                        POS access info is still waiting for its backend endpoint.
+                        The layout is ready, but the real credentials API has not
+                        been provided yet.
                       </p>
                     </div>
                   </div>
@@ -1068,8 +1103,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               </div>
             )}
 
-            {/* Payments Tab */}
-            {activeTab === "payments" && <PaymentPage />}
+            {activeTab === "payments" && (
+              <PaymentPage refreshKey={paymentsRefreshKey} />
+            )}
           </div>
         </div>
       </div>
