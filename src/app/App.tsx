@@ -348,7 +348,7 @@ export default function App() {
               onClick={() => setIsMobileMenuOpen(false)}
               className="flex items-center gap-2 px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
             >
-              <span>🏠</span>
+              {/* <span>🏠</span> */}
               Home
             </a>
             <a
