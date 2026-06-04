@@ -63,6 +63,17 @@ export interface VerifyOtpResponse {
   [key: string]: unknown;
 }
 
+export interface TelegramAuthPayload {
+  auth_date?: number | string;
+  first_name?: string;
+  hash?: string;
+  id?: number | string;
+  init_data?: string;
+  last_name?: string;
+  photo_url?: string;
+  username?: string;
+}
+
 export interface UserProfile {
   id?: number;
   name?: string;
@@ -432,6 +443,32 @@ export async function verifyOtp(phone: string, otp: string) {
   const data = await apiRequest<VerifyOtpResponse>("/api/auth/verifyotp", {
     method: "POST",
     body: { phone, otp },
+  });
+
+  if (data?.token) {
+    setStoredAuthToken(data.token);
+  }
+
+  return data;
+}
+
+export async function loginWithGoogle(idToken: string) {
+  const data = await apiRequest<VerifyOtpResponse>("/api/auth/google", {
+    method: "POST",
+    body: { id_token: idToken },
+  });
+
+  if (data?.token) {
+    setStoredAuthToken(data.token);
+  }
+
+  return data;
+}
+
+export async function loginWithTelegram(payload: TelegramAuthPayload) {
+  const data = await apiRequest<VerifyOtpResponse>("/api/auth/telegram", {
+    method: "POST",
+    body: payload,
   });
 
   if (data?.token) {
