@@ -305,144 +305,145 @@ export default function App() {
           </div>
         </div>
 
-        {/* Mobile Drawer (Glassmorphic Slide-out Menu) */}
+      </header>
+
+      {/* Mobile Drawer (Glassmorphic Slide-out Menu) */}
+      <div
+        className={cn(
+          "fixed inset-0 z-50 lg:hidden transition-all duration-300 ease-in-out",
+          isMobileMenuOpen
+            ? "opacity-100 pointer-events-auto"
+            : "opacity-0 pointer-events-none",
+        )}
+      >
+        {/* Backdrop Blur Overlay */}
+        <div
+          className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+
+        {/* Drawer Panel */}
         <div
           className={cn(
-            "fixed inset-0 z-50 lg:hidden transition-all duration-300 ease-in-out",
-            isMobileMenuOpen
-              ? "opacity-100 pointer-events-auto"
-              : "opacity-0 pointer-events-none",
+            "absolute top-0 right-0 w-80 h-full bg-white shadow-2xl flex flex-col p-6 transition-transform duration-300 ease-in-out transform",
+            isMobileMenuOpen ? "translate-x-0" : "translate-x-full",
           )}
         >
-          {/* Backdrop Blur Overlay */}
-          <div
-            className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300"
-            onClick={() => setIsMobileMenuOpen(false)}
-          />
+          {/* Header of Drawer */}
+          <div className="flex items-center justify-between pb-6 border-b border-slate-100">
+            <img src={logo} alt="Nealika" className="h-[45px]" />
+            <button
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="p-2 text-slate-500 hover:text-slate-900 rounded-lg hover:bg-slate-100 transition-colors"
+              aria-label="Close Menu"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
 
-          {/* Drawer Panel */}
-          <div
-            className={cn(
-              "absolute top-0 right-0 w-80 h-full bg-white shadow-2xl flex flex-col p-6 transition-transform duration-300 ease-in-out transform",
-              isMobileMenuOpen ? "translate-x-0" : "translate-x-full",
-            )}
-          >
-            {/* Header of Drawer */}
-            <div className="flex items-center justify-between pb-6 border-b border-slate-100">
-              <img src={logo} alt="Nealika" className="h-[45px]" />
-              <button
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="p-2 text-slate-500 hover:text-slate-900 rounded-lg hover:bg-slate-100 transition-colors"
-                aria-label="Close Menu"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
+          {/* Scrollable Navigation Links */}
+          <nav className="flex flex-col gap-2 py-6 overflow-y-auto flex-1">
+            <a
+              href="#"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="flex items-center gap-2 px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
+            >
+              <span>🏠</span>
+              Home
+            </a>
+            <a
+              href="#features"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
+            >
+              About Us
+            </a>
+            <a
+              href="#"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="flex items-center justify-between px-4 py-3 rounded-lg text-blue-600 hover:bg-blue-50/50 transition-all font-medium"
+            >
+              <span>POS</span>
+              <span className="px-1.5 py-0.5 bg-green-500 text-white text-[10px] font-semibold rounded">
+                NEW
+              </span>
+            </a>
+            <a
+              href="#pricing"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
+            >
+              Services
+            </a>
+            <a
+              href="#"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
+            >
+              Technology
+            </a>
+            <a
+              href="#"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
+            >
+              Digital Marketing
+            </a>
+            <a
+              href="#"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
+            >
+              E-Commerce
+            </a>
+            <a
+              href="#"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
+            >
+              Clients
+            </a>
+            <a
+              href="#"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
+            >
+              News
+            </a>
+          </nav>
 
-            {/* Scrollable Navigation Links */}
-            <nav className="flex flex-col gap-2 py-6 overflow-y-auto flex-1">
-              <a
-                href="#"
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="flex items-center gap-2 px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
-              >
-                <span>🏠</span>
-                Home
-              </a>
-              <a
-                href="#features"
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
-              >
-                About Us
-              </a>
-              <a
-                href="#"
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="flex items-center justify-between px-4 py-3 rounded-lg text-blue-600 hover:bg-blue-50/50 transition-all font-medium"
-              >
-                <span>POS</span>
-                <span className="px-1.5 py-0.5 bg-green-500 text-white text-[10px] font-semibold rounded">
-                  NEW
-                </span>
-              </a>
-              <a
-                href="#pricing"
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
-              >
-                Services
-              </a>
-              <a
-                href="#"
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
-              >
-                Technology
-              </a>
-              <a
-                href="#"
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
-              >
-                Digital Marketing
-              </a>
-              <a
-                href="#"
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
-              >
-                E-Commerce
-              </a>
-              <a
-                href="#"
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
-              >
-                Clients
-              </a>
-              <a
-                href="#"
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
-              >
-                News
-              </a>
-            </nav>
-
-            {/* Top Bar Actions & CTA in Mobile Menu */}
-            <div className="border-t border-slate-100 pt-6 flex flex-col gap-4">
-              <button
-                onClick={() => {
-                  setIsMobileMenuOpen(false);
-                  setShowLoginPage(true);
-                }}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors font-medium text-sm"
-              >
-                <User className="w-4 h-4" />
-                Account
-              </button>
-              <a
-                href="#"
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors font-medium text-sm"
-              >
-                <Shield className="w-4 h-4" />
-                Support Desk
-              </a>
-              <button
-                onClick={() => {
-                  setIsMobileMenuOpen(false);
-                  handleGetStarted();
-                }}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-semibold text-center shadow-md hover:shadow-lg"
-              >
-                Start Free Trial
-              </button>
-            </div>
+          {/* Top Bar Actions & CTA in Mobile Menu */}
+          <div className="border-t border-slate-100 pt-6 flex flex-col gap-4">
+            <button
+              onClick={() => {
+                setIsMobileMenuOpen(false);
+                setShowLoginPage(true);
+              }}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors font-medium text-sm"
+            >
+              <User className="w-4 h-4" />
+              Account
+            </button>
+            <a
+              href="#"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors font-medium text-sm"
+            >
+              <Shield className="w-4 h-4" />
+              Support Desk
+            </a>
+            <button
+              onClick={() => {
+                setIsMobileMenuOpen(false);
+                handleGetStarted();
+              }}
+              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-semibold text-center shadow-md hover:shadow-lg"
+            >
+              Start Free Trial
+            </button>
           </div>
         </div>
-      </header>
+      </div>
 
       {/* Hero Section */}
       <section className="relative py-48 md:py-64 px-4 sm:px-6 lg:px-8 overflow-hidden">
