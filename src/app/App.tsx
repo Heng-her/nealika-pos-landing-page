@@ -1,38 +1,115 @@
 import {
+  BarChart3,
   Check,
   CreditCard,
-  BarChart3,
-  Users,
-  Zap,
-  Shield,
-  X,
-  User,
   Menu,
+  Shield,
+  User,
+  Users,
+  X,
+  Zap,
 } from "lucide-react";
-import { useState, useEffect } from "react";
-import LoginPage from "./components/LoginPage";
-import Dashboard from "./components/Dashboard";
+import { useEffect, useState } from "react";
 import CheckoutPage from "./components/CheckoutPage";
+import Dashboard from "./components/Dashboard";
 import Footer from "./components/Footer";
-import logo from "@/imports/logo-nealika.png";
+import LoginPage from "./components/LoginPage";
 import { cn } from "./components/ui/utils";
+import logo from "@/imports/logo-nealika.png";
+import {
+  clearStoredAuthToken,
+  getErrorMessage,
+  getMe,
+  getPackages,
+  getStoredAuthToken,
+  mapPackageToDisplayPackage,
+  type DisplayPackage,
+} from "./services/posApi";
 
 export default function App() {
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [showLoginPage, setShowLoginPage] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(
+    Boolean(getStoredAuthToken()),
+  );
   const [showCheckout, setShowCheckout] = useState(false);
+  const [selectedPackageId, setSelectedPackageId] = useState<number | null>(
+    null,
+  );
+  const [pricingPlans, setPricingPlans] = useState<DisplayPackage[]>([]);
+  const [isLoadingPackages, setIsLoadingPackages] = useState(true);
+  const [packagesError, setPackagesError] = useState("");
+  const [isCheckingAuth, setIsCheckingAuth] = useState(
+    Boolean(getStoredAuthToken()),
+  );
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isTopBarVisible, setIsTopBarVisible] = useState(true);
   const [lastScrollY, setLastScrollY] = useState(0);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadInitialState = async () => {
+      setIsLoadingPackages(true);
+      setPackagesError("");
+
+      const [packagesResult, meResult] = await Promise.allSettled([
+        getPackages(),
+        getStoredAuthToken() ? getMe() : Promise.resolve(null),
+      ]);
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (packagesResult.status === "fulfilled") {
+        const mappedPackages = packagesResult.value.map(mapPackageToDisplayPackage);
+        setPricingPlans(mappedPackages);
+
+        if (!selectedPackageId && mappedPackages.length > 0) {
+          setSelectedPackageId(
+            mappedPackages.find((item) => item.highlighted)?.id ||
+              mappedPackages[0].id,
+          );
+        }
+      } else {
+        setPackagesError(getErrorMessage(packagesResult.reason));
+      }
+
+      if (meResult.status === "fulfilled") {
+        setIsAuthenticated(Boolean(meResult.value));
+      } else {
+        clearStoredAuthToken();
+        setIsAuthenticated(false);
+      }
+
+      setIsLoadingPackages(false);
+      setIsCheckingAuth(false);
+    };
+
+    loadInitialState();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedPackageId && pricingPlans.length > 0) {
+      setSelectedPackageId(
+        pricingPlans.find((item) => item.highlighted)?.id || pricingPlans[0].id,
+      );
+    }
+  }, [pricingPlans, selectedPackageId]);
 
   useEffect(() => {
     const handleScroll = () => {
       const currentScrollY = window.scrollY;
       const difference = currentScrollY - lastScrollY;
 
-      // Ignore scrolls less than 5px
-      if (Math.abs(difference) < 5) return;
+      if (Math.abs(difference) < 5) {
+        return;
+      }
 
       if (currentScrollY > lastScrollY && currentScrollY > 10) {
         setIsTopBarVisible(false);
@@ -47,8 +124,8 @@ export default function App() {
   }, [lastScrollY]);
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
         setIsVideoModalOpen(false);
       }
     };
@@ -56,66 +133,11 @@ export default function App() {
     if (isVideoModalOpen) {
       window.addEventListener("keydown", handleKeyDown);
     }
+
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [isVideoModalOpen]);
-
-  const pricingPlans = [
-    {
-      id: 1,
-      name: "Starter",
-      price: 29,
-      period: "/month",
-      description: "Perfect for small businesses just getting started",
-      features: [
-        "Up to 1 register",
-        "Basic inventory management",
-        "Sales reporting",
-        "Email support",
-        "Mobile app access",
-        "Payment processing",
-      ],
-      highlighted: false,
-    },
-    {
-      id: 2,
-      name: "Professional",
-      price: 79,
-      period: "/month",
-      description: "Ideal for growing businesses with multiple locations",
-      features: [
-        "Up to 5 registers",
-        "Advanced inventory management",
-        "Advanced analytics & reports",
-        "Priority support 24/7",
-        "Employee management",
-        "Customer loyalty program",
-        "Multi-location support",
-        "API access",
-      ],
-      highlighted: true,
-    },
-    {
-      id: 3,
-      name: "Enterprise",
-      price: 199,
-      period: "/month",
-      description: "Complete solution for large-scale operations",
-      features: [
-        "Unlimited registers",
-        "Enterprise inventory system",
-        "Custom reports & dashboards",
-        "Dedicated account manager",
-        "Advanced security features",
-        "Custom integrations",
-        "White-label options",
-        "Advanced fraud protection",
-        "On-premise deployment option",
-      ],
-      highlighted: false,
-    },
-  ];
 
   const features = [
     {
@@ -147,6 +169,7 @@ export default function App() {
   ];
 
   const handleLogout = () => {
+    clearStoredAuthToken();
     setIsAuthenticated(false);
     setShowLoginPage(false);
   };
@@ -156,7 +179,10 @@ export default function App() {
     setShowLoginPage(false);
   };
 
-  const handleGetStarted = () => {
+  const handleGetStarted = (packageId?: number) => {
+    if (packageId) {
+      setSelectedPackageId(packageId);
+    }
     setShowCheckout(true);
   };
 
@@ -164,6 +190,26 @@ export default function App() {
     setIsAuthenticated(true);
     setShowCheckout(false);
   };
+
+  const checkoutDefaultPackageId =
+    selectedPackageId ||
+    pricingPlans.find((item) => item.highlighted)?.id ||
+    pricingPlans[0]?.id ||
+    0;
+
+  if (isCheckingAuth) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4">
+        <div className="relative flex items-center justify-center w-24 h-24">
+          <img src={logo} alt="Nealika" className="h-12 animate-pulse z-10" />
+          <div className="absolute inset-0 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
+        </div>
+        <p className="text-slate-500 font-medium text-sm animate-pulse">
+          Initializing your secure workspace...
+        </p>
+      </div>
+    );
+  }
 
   if (isAuthenticated) {
     return <Dashboard onLogout={handleLogout} />;
@@ -173,7 +219,7 @@ export default function App() {
     return (
       <CheckoutPage
         packages={pricingPlans}
-        defaultPackageId={2}
+        defaultPackageId={checkoutDefaultPackageId}
         currentPackageId={null}
         onBack={() => setShowCheckout(false)}
         onComplete={handleCheckoutComplete}
@@ -192,14 +238,12 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
-      {/* Header */}
       <header
         className={cn(
           "bg-white sticky top-0 z-50 shadow-sm transition-transform duration-300 ease-in-out",
           isTopBarVisible ? "translate-y-0" : "-translate-y-[37px]",
         )}
       >
-        {/* Top Bar */}
         <div className="border-b border-slate-200">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
             <div className="flex items-center justify-end gap-6 text-sm">
@@ -221,14 +265,12 @@ export default function App() {
           </div>
         </div>
 
-        {/* Main Navigation */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between py-3 lg:py-0">
             <div className="flex items-center gap-2">
-              <img src={logo} alt="Nealika" className="h-[55px]" />
+              <img src={logo} alt="Nealika" className="h-[45px] lg:h-[55px]" />
             </div>
 
-            {/* Desktop Navigation */}
             <nav className="hidden lg:flex items-center gap-6 py-[20px]">
               <a
                 href="#"
@@ -286,14 +328,7 @@ export default function App() {
               </a>
             </nav>
 
-            {/* Mobile Menu Trigger & Get Start CTA */}
             <div className="flex items-center gap-3 lg:hidden">
-              {/* <button
-                onClick={handleGetStarted}
-                className="px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
-              >
-                Get Start
-              </button> */}
               <button
                 onClick={() => setIsMobileMenuOpen(true)}
                 className="p-2 text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-100 transition-colors"
@@ -304,7 +339,6 @@ export default function App() {
             </div>
           </div>
         </div>
-
       </header>
 
       {/* Mobile Drawer (Glassmorphic Slide-out Menu) */}
@@ -316,20 +350,17 @@ export default function App() {
             : "opacity-0 pointer-events-none",
         )}
       >
-        {/* Backdrop Blur Overlay */}
         <div
           className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300"
           onClick={() => setIsMobileMenuOpen(false)}
         />
 
-        {/* Drawer Panel */}
         <div
           className={cn(
             "absolute top-0 right-0 w-80 h-full bg-white shadow-2xl flex flex-col p-6 transition-transform duration-300 ease-in-out transform",
             isMobileMenuOpen ? "translate-x-0" : "translate-x-full",
           )}
         >
-          {/* Header of Drawer */}
           <div className="flex items-center justify-between pb-6 border-b border-slate-100">
             <img src={logo} alt="Nealika" className="h-[45px]" />
             <button
@@ -341,15 +372,13 @@ export default function App() {
             </button>
           </div>
 
-          {/* Scrollable Navigation Links */}
           <nav className="flex flex-col gap-2 py-6 overflow-y-auto flex-1">
             <a
               href="#"
               onClick={() => setIsMobileMenuOpen(false)}
               className="flex items-center gap-2 px-4 py-3 rounded-lg text-slate-700 hover:text-blue-600 hover:bg-slate-50 transition-all font-medium"
             >
-              {/* <span>🏠</span> */}
-              Home
+              <span>Home</span>
             </a>
             <a
               href="#features"
@@ -412,7 +441,6 @@ export default function App() {
             </a>
           </nav>
 
-          {/* Top Bar Actions & CTA in Mobile Menu */}
           <div className="border-t border-slate-100 pt-6 flex flex-col gap-4">
             <button
               onClick={() => {
@@ -437,7 +465,8 @@ export default function App() {
                 setIsMobileMenuOpen(false);
                 handleGetStarted();
               }}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-semibold text-center shadow-md hover:shadow-lg"
+              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-semibold text-center shadow-md hover:shadow-lg disabled:bg-slate-300"
+              disabled={pricingPlans.length === 0}
             >
               Start Free Trial
             </button>
@@ -445,9 +474,8 @@ export default function App() {
         </div>
       </div>
 
-      {/* Hero Section */}
+
       <section className="relative py-48 md:py-64 px-4 sm:px-6 lg:px-8 overflow-hidden">
-        {/* Background Image */}
         <div className="absolute inset-0 z-0">
           <img
             src="https://images.unsplash.com/photo-1746723386880-ca68b5f4b22d?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1920"
@@ -457,7 +485,6 @@ export default function App() {
           <div className="absolute inset-0 bg-gradient-to-r from-slate-900/90 via-slate-900/80 to-blue-900/80"></div>
         </div>
 
-        {/* Content */}
         <div className="relative z-10 max-w-7xl mx-auto text-center">
           <h1 className="text-5xl md:text-6xl font-bold text-white mb-6">
             Modern POS System for
@@ -469,8 +496,9 @@ export default function App() {
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <button
-              onClick={handleGetStarted}
-              className="px-8 py-3 text-lg font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-lg hover:shadow-xl"
+              onClick={() => handleGetStarted()}
+              disabled={pricingPlans.length === 0}
+              className="px-8 py-3 text-lg font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-lg hover:shadow-xl disabled:bg-slate-400"
             >
               Start Free Trial
             </button>
@@ -484,7 +512,6 @@ export default function App() {
         </div>
       </section>
 
-      {/* Features Section */}
       <section id="features" className="py-20 px-4 sm:px-6 lg:px-8 bg-white">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
@@ -512,7 +539,6 @@ export default function App() {
         </div>
       </section>
 
-      {/* Pricing Section */}
       <section id="pricing" className="py-20 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
@@ -523,74 +549,117 @@ export default function App() {
               Choose the perfect plan for your business size
             </p>
           </div>
-          <div className="grid md:grid-cols-3 gap-8">
-            {pricingPlans.map((plan, index) => (
-              <div
-                key={index}
-                className={`rounded-2xl p-8 ${
-                  plan.highlighted
-                    ? "bg-blue-600 text-white shadow-2xl scale-105 border-4 border-blue-400"
-                    : "bg-white border-2 border-slate-200 hover:border-blue-300 shadow-lg"
-                } transition-all`}
+
+          {packagesError ? (
+            <div className="max-w-2xl mx-auto rounded-2xl border border-red-200 bg-red-50 p-6 text-center">
+              <p className="text-red-700 font-medium">{packagesError}</p>
+              <button
+                onClick={() => window.location.reload()}
+                className="mt-4 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
               >
-                {plan.highlighted && (
-                  <div className="text-center mb-4">
-                    <span className="inline-block px-4 py-1 bg-white/20 rounded-full text-sm font-semibold">
-                      Most Popular
-                    </span>
+                Retry
+              </button>
+            </div>
+          ) : isLoadingPackages ? (
+            <div className="grid md:grid-cols-3 gap-8">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="rounded-2xl p-8 bg-white border-2 border-slate-200 shadow-lg animate-pulse"
+                >
+                  <div className="h-6 w-32 bg-slate-200 rounded mb-6"></div>
+                  <div className="h-12 w-28 bg-slate-200 rounded mb-4"></div>
+                  <div className="h-4 w-full bg-slate-200 rounded mb-2"></div>
+                  <div className="h-4 w-4/5 bg-slate-200 rounded mb-8"></div>
+                  <div className="h-12 w-full bg-slate-200 rounded mb-8"></div>
+                  <div className="space-y-3">
+                    {Array.from({ length: 4 }).map((__, featureIndex) => (
+                      <div
+                        key={featureIndex}
+                        className="h-4 w-full bg-slate-200 rounded"
+                      ></div>
+                    ))}
                   </div>
-                )}
-                <h3
-                  className={`text-2xl font-bold mb-2 ${plan.highlighted ? "text-white" : "text-slate-900"}`}
-                >
-                  {plan.name}
-                </h3>
-                <div className="mb-4">
-                  <span className="text-5xl font-bold">${plan.price}</span>
-                  <span
-                    className={`text-lg ${plan.highlighted ? "text-white/80" : "text-slate-600"}`}
-                  >
-                    {plan.period}
-                  </span>
                 </div>
-                <p
-                  className={`mb-6 ${plan.highlighted ? "text-white/90" : "text-slate-600"}`}
-                >
-                  {plan.description}
-                </p>
-                <button
-                  onClick={handleGetStarted}
-                  className={`w-full py-3 rounded-lg font-semibold transition-colors mb-8 ${
+              ))}
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-3 gap-8">
+              {pricingPlans.map((plan) => (
+                <div
+                  key={plan.id}
+                  className={`rounded-2xl p-8 ${
                     plan.highlighted
-                      ? "bg-white text-blue-600 hover:bg-blue-50"
-                      : "bg-blue-600 text-white hover:bg-blue-700"
-                  }`}
+                      ? "bg-blue-600 text-white shadow-2xl scale-105 border-4 border-blue-400"
+                      : "bg-white border-2 border-slate-200 hover:border-blue-300 shadow-lg"
+                  } transition-all`}
                 >
-                  Get Started
-                </button>
-                <div className="space-y-3">
-                  {plan.features.map((feature, featureIndex) => (
-                    <div key={featureIndex} className="flex items-start gap-3">
-                      <Check
-                        className={`w-5 h-5 flex-shrink-0 mt-0.5 ${plan.highlighted ? "text-white" : "text-blue-600"}`}
-                      />
-                      <span
-                        className={
-                          plan.highlighted ? "text-white/90" : "text-slate-600"
-                        }
-                      >
-                        {feature}
+                  {plan.highlighted && (
+                    <div className="text-center mb-4">
+                      <span className="inline-block px-4 py-1 bg-white/20 rounded-full text-sm font-semibold">
+                        Most Popular
                       </span>
                     </div>
-                  ))}
+                  )}
+                  <h3
+                    className={`text-2xl font-bold mb-2 ${
+                      plan.highlighted ? "text-white" : "text-slate-900"
+                    }`}
+                  >
+                    {plan.name}
+                  </h3>
+                  <div className="mb-4">
+                    <span className="text-5xl font-bold">${plan.price}</span>
+                    <span
+                      className={`text-lg ${
+                        plan.highlighted ? "text-white/80" : "text-slate-600"
+                      }`}
+                    >
+                      {plan.period}
+                    </span>
+                  </div>
+                  <p
+                    className={`mb-6 ${
+                      plan.highlighted ? "text-white/90" : "text-slate-600"
+                    }`}
+                  >
+                    {plan.description}
+                  </p>
+                  <button
+                    onClick={() => handleGetStarted(plan.id)}
+                    className={`w-full py-3 rounded-lg font-semibold transition-colors mb-8 ${
+                      plan.highlighted
+                        ? "bg-white text-blue-600 hover:bg-blue-50"
+                        : "bg-blue-600 text-white hover:bg-blue-700"
+                    }`}
+                  >
+                    Get Started
+                  </button>
+                  <div className="space-y-3">
+                    {plan.features.map((feature, featureIndex) => (
+                      <div key={featureIndex} className="flex items-start gap-3">
+                        <Check
+                          className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
+                            plan.highlighted ? "text-white" : "text-blue-600"
+                          }`}
+                        />
+                        <span
+                          className={
+                            plan.highlighted ? "text-white/90" : "text-slate-600"
+                          }
+                        >
+                          {feature}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
-      {/* CTA Section */}
       <section className="py-20 px-4 sm:px-6 lg:px-8 bg-blue-600">
         <div className="max-w-4xl mx-auto text-center">
           <h2 className="text-4xl font-bold text-white mb-4">
@@ -600,21 +669,20 @@ export default function App() {
             Join thousands of businesses already using Nealika POS
           </p>
           <button
-            onClick={handleGetStarted}
-            className="px-8 py-4 text-lg font-semibold text-blue-600 bg-white rounded-lg hover:bg-blue-50 transition-colors shadow-lg hover:shadow-xl"
+            onClick={() => handleGetStarted()}
+            disabled={pricingPlans.length === 0}
+            className="px-8 py-4 text-lg font-semibold text-blue-600 bg-white rounded-lg hover:bg-blue-50 transition-colors shadow-lg hover:shadow-xl disabled:bg-slate-200"
           >
             Start Your Free 14-Day Trial
           </button>
           <p className="text-blue-100 mt-4">
-            No credit card required • Cancel anytime
+            No credit card required | Cancel anytime
           </p>
         </div>
       </section>
 
-      {/* Footer */}
       <Footer />
 
-      {/* Video Modal */}
       {isVideoModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div className="relative w-full max-w-5xl bg-slate-900 rounded-2xl overflow-hidden shadow-2xl">
@@ -625,7 +693,6 @@ export default function App() {
               <X className="w-6 h-6 text-white" />
             </button>
             <div className="relative aspect-video">
-              {/* https://www.youtube.com/watch?v=vIl15M3Dkjk&feature=youtu.be */}
               <iframe
                 src="https://www.youtube.com/embed/vIl15M3Dkjk?autoplay=1"
                 title="Nealika POS Demo"
