@@ -425,22 +425,33 @@ export function submitPaywayForm(
 }
 
 export async function getPackages() {
-  return apiRequest<ApiPackage[]>("/api/packages");
+  return apiRequest<ApiPackage[]>("/packages");
 }
 
 export async function getSubscriptionDurations() {
-  return apiRequest<ApiSubscriptionDuration[]>("/api/subscription_durations");
+  return apiRequest<ApiSubscriptionDuration[]>("/subscription_durations");
 }
 
 export async function sendOtp(phone: string) {
-  return apiRequest<unknown>("/api/auth/sendotp", {
+  return apiRequest<unknown>("/auth/sendotp", {
     method: "POST",
     body: { phone },
   });
 }
+export async function logout() {
+  try {
+    const data = await apiRequest<unknown>("/auth/logout", {
+      method: "POST",
+      requiresAuth: true,
+    });
+    return data;
+  } finally {
+    clearStoredAuthToken();
+  }
+}
 
 export async function verifyOtp(phone: string, otp: string) {
-  const data = await apiRequest<VerifyOtpResponse>("/api/auth/verifyotp", {
+  const data = await apiRequest<VerifyOtpResponse>("/auth/verifyotp", {
     method: "POST",
     body: { phone, otp },
   });
@@ -453,7 +464,7 @@ export async function verifyOtp(phone: string, otp: string) {
 }
 
 export async function loginWithGoogle(idToken: string) {
-  const data = await apiRequest<VerifyOtpResponse>("/api/auth/google", {
+  const data = await apiRequest<VerifyOtpResponse>("/auth/google", {
     method: "POST",
     body: { id_token: idToken },
   });
@@ -466,7 +477,7 @@ export async function loginWithGoogle(idToken: string) {
 }
 
 export async function loginWithTelegram(payload: TelegramAuthPayload) {
-  const data = await apiRequest<VerifyOtpResponse>("/api/auth/telegram", {
+  const data = await apiRequest<VerifyOtpResponse>("/auth/telegram", {
     method: "POST",
     body: payload,
   });
@@ -484,7 +495,7 @@ export async function getMe() {
   }
 
   try {
-    return await apiRequest<AuthUser>("/api/auth/me", {
+    return await apiRequest<AuthUser>("/auth/me", {
       requiresAuth: true,
     });
   } catch (error) {
@@ -497,13 +508,13 @@ export async function getMe() {
 }
 
 export async function getProfile() {
-  return apiRequest<UserProfile>("/api/profile", {
+  return apiRequest<UserProfile>("/profile", {
     requiresAuth: true,
   });
 }
 
 export async function updateProfile(profile: UserProfile) {
-  return apiRequest<UserProfile>("/api/profile", {
+  return apiRequest<UserProfile>("/profile", {
     method: "PUT",
     requiresAuth: true,
     body: profile,
@@ -511,7 +522,7 @@ export async function updateProfile(profile: UserProfile) {
 }
 
 export async function getCurrentSubscription() {
-  return apiRequest<CurrentSubscription | null>("/api/subscriptions/current", {
+  return apiRequest<CurrentSubscription | null>("/subscriptions/current", {
     requiresAuth: true,
   });
 }
@@ -521,7 +532,7 @@ export async function getCheckoutQuote(payload: {
   duration_id: number;
   coupon_code?: string;
 }) {
-  return apiRequest<CheckoutQuote>("/api/checkout/quote", {
+  return apiRequest<CheckoutQuote>("/checkout/quote", {
     method: "POST",
     body: payload,
   });
@@ -533,7 +544,7 @@ export async function createPaywayPayment(payload: {
   coupon_code?: string;
   payment_method: "khqr" | "card";
 }) {
-  return apiRequest<PaywayCreateResponse>("/api/payments/paywaycreate", {
+  return apiRequest<PaywayCreateResponse>("/payments/paywaycreate", {
     method: "POST",
     requiresAuth: true,
     body: payload,
@@ -541,13 +552,13 @@ export async function createPaywayPayment(payload: {
 }
 
 export async function getPaymentHistory() {
-  return apiRequest<PaymentHistoryItem[]>("/api/payments/history", {
+  return apiRequest<PaymentHistoryItem[]>("/payments/history", {
     requiresAuth: true,
   });
 }
 
 export async function getPaymentStatus(transactionId: string) {
-  return apiRequest<PaymentStatusResponse>("/api/payments/statusby", {
+  return apiRequest<PaymentStatusResponse>("/payments/statusby", {
     requiresAuth: true,
     query: { tid: transactionId },
   });

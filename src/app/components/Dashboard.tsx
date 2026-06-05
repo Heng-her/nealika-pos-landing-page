@@ -20,6 +20,7 @@ import {
   getErrorMessage,
   getPackages,
   getProfile,
+  logout,
   mapPackageToDisplayPackage,
   updateProfile,
   type CurrentSubscription,
@@ -261,6 +262,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   };
 
   const handleDashboardLogout = () => {
+    logout();
     clearStoredAuthToken();
     onLogout();
   };
