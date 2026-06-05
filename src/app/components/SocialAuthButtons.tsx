@@ -6,7 +6,6 @@ import {
 } from "../services/posApi";
 import {
   ensureGoogleIdentityScript,
-  setTelegramAuthHandler,
   ensureTelegramWebAppScript,
   getGoogleClientId,
   getTelegramBotUsername,
@@ -32,13 +31,9 @@ export default function SocialAuthButtons({
   const googleButtonMountRef = useRef<HTMLDivElement | null>(null);
   const telegramButtonShellRef = useRef<HTMLDivElement | null>(null);
   const telegramButtonMountRef = useRef<HTMLDivElement | null>(null);
-  const onAuthSuccessRef = useRef(onAuthSuccess);
-  const onErrorRef = useRef(onError);
-  const onStartRef = useRef(onStart);
-  const telegramAuthTimeoutRef = useRef<number | null>(null);
-  const telegramAuthReturnFocusRef = useRef<number | null>(null);
-  const telegramAuthPendingRef = useRef(false);
-  const telegramPopupOpenedRef = useRef(false);
+  const telegramCallbackNameRef = useRef(
+    `__nealikaTelegramAuth_${Math.random().toString(36).slice(2)}`,
+  );
 
   const [googleButtonWidth, setGoogleButtonWidth] = useState(0);
   const [googleReady, setGoogleReady] = useState(false);
@@ -51,46 +46,8 @@ export default function SocialAuthButtons({
   const telegramBotUsername = getTelegramBotUsername();
   const isDisabled = disabled || isSubmitting;
 
-  useEffect(() => {
-    onAuthSuccessRef.current = onAuthSuccess;
-    onErrorRef.current = onError;
-    onStartRef.current = onStart;
-  }, [onAuthSuccess, onError, onStart]);
-
   const startAuth = () => {
-    onStartRef.current?.();
-  };
-
-  const clearTelegramAuthTimeout = () => {
-    if (telegramAuthTimeoutRef.current !== null) {
-      window.clearTimeout(telegramAuthTimeoutRef.current);
-      telegramAuthTimeoutRef.current = null;
-    }
-    if (telegramAuthReturnFocusRef.current !== null) {
-      window.clearTimeout(telegramAuthReturnFocusRef.current);
-      telegramAuthReturnFocusRef.current = null;
-    }
-    telegramAuthPendingRef.current = false;
-    telegramPopupOpenedRef.current = false;
-  };
-
-  const startTelegramAuthTimeout = () => {
-    if (typeof window === "undefined" || telegramAuthPendingRef.current) {
-      return;
-    }
-
-    if (import.meta.env.DEV) {
-      console.log("Telegram auth started");
-    }
-
-    startAuth();
-    telegramAuthPendingRef.current = true;
-    telegramAuthTimeoutRef.current = window.setTimeout(() => {
-      telegramAuthTimeoutRef.current = null;
-      telegramAuthPendingRef.current = false;
-      telegramPopupOpenedRef.current = false;
-      onErrorRef.current("Telegram login was not completed.");
-    }, 60000);
+    onStart?.();
   };
 
   const runSuccessfulAuth = async (authAction: () => Promise<unknown>) => {
@@ -99,11 +56,9 @@ export default function SocialAuthButtons({
 
     try {
       await authAction();
-      clearTelegramAuthTimeout();
-      await onAuthSuccessRef.current();
+      await onAuthSuccess();
     } catch (error) {
-      clearTelegramAuthTimeout();
-      onErrorRef.current(getErrorMessage(error));
+      onError(getErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -186,72 +141,6 @@ export default function SocialAuthButtons({
   }, []);
 
   useEffect(() => {
-    const handleWindowBlur = () => {
-      if (telegramAuthPendingRef.current) {
-        telegramPopupOpenedRef.current = true;
-      }
-    };
-
-    const handleWindowFocus = () => {
-      if (
-        !telegramAuthPendingRef.current ||
-        !telegramPopupOpenedRef.current ||
-        typeof window === "undefined"
-      ) {
-        return;
-      }
-
-      if (telegramAuthReturnFocusRef.current !== null) {
-        window.clearTimeout(telegramAuthReturnFocusRef.current);
-      }
-
-      telegramAuthReturnFocusRef.current = window.setTimeout(() => {
-        telegramAuthReturnFocusRef.current = null;
-
-        if (telegramAuthPendingRef.current) {
-          clearTelegramAuthTimeout();
-          onErrorRef.current("Telegram login was not completed.");
-        }
-      }, 1500);
-    };
-
-    window.addEventListener("blur", handleWindowBlur);
-    window.addEventListener("focus", handleWindowFocus);
-
-    return () => {
-      window.removeEventListener("blur", handleWindowBlur);
-      window.removeEventListener("focus", handleWindowFocus);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (isTelegramWebApp) {
-      setTelegramAuthHandler(null);
-      clearTelegramAuthTimeout();
-      return;
-    }
-
-    setTelegramAuthHandler((user: TelegramWidgetAuthData) => {
-      void runSuccessfulAuth(() =>
-        loginWithTelegram({
-          auth_date: user.auth_date,
-          first_name: user.first_name,
-          hash: user.hash,
-          id: user.id,
-          last_name: user.last_name,
-          photo_url: user.photo_url,
-          username: user.username,
-        }),
-      );
-    });
-
-    return () => {
-      setTelegramAuthHandler(null);
-      clearTelegramAuthTimeout();
-    };
-  }, [isTelegramWebApp]);
-
-  useEffect(() => {
     if (!googleClientId || !googleButtonMountRef.current || !googleButtonWidth) {
       setGoogleReady(false);
       return;
@@ -275,7 +164,7 @@ export default function SocialAuthButtons({
             const credential = response.credential;
 
             if (!credential) {
-              onErrorRef.current("Google login failed. Please try again.");
+              onError("Google login failed. Please try again.");
               return;
             }
 
@@ -307,7 +196,7 @@ export default function SocialAuthButtons({
     return () => {
       isMounted = false;
     };
-  }, [googleButtonWidth, googleClientId]);
+  }, [googleButtonWidth, googleClientId, onError]);
 
   useEffect(() => {
     if (
@@ -319,6 +208,21 @@ export default function SocialAuthButtons({
       return;
     }
 
+    const callbackName = telegramCallbackNameRef.current;
+    (window as any)[callbackName] = (user: TelegramWidgetAuthData) => {
+      void runSuccessfulAuth(() =>
+        loginWithTelegram({
+          auth_date: user.auth_date,
+          first_name: user.first_name,
+          hash: user.hash,
+          id: user.id,
+          last_name: user.last_name,
+          photo_url: user.photo_url,
+          username: user.username,
+        }),
+      );
+    };
+
     const mountNode = telegramButtonMountRef.current;
     mountNode.innerHTML = "";
     setTelegramReady(false);
@@ -327,16 +231,13 @@ export default function SocialAuthButtons({
     script.async = true;
     script.src = "https://telegram.org/js/telegram-widget.js?22";
     script.setAttribute("data-lang", "en");
-    script.setAttribute("data-onauth", "onTelegramAuth(user)");
+    script.setAttribute("data-onauth", `${callbackName}(user)`);
     script.setAttribute("data-radius", "8");
     script.setAttribute("data-request-access", "write");
     script.setAttribute("data-size", "large");
     script.setAttribute("data-telegram-login", telegramBotUsername);
     script.setAttribute("data-userpic", "false");
     script.onload = () => {
-      if (import.meta.env.DEV) {
-        console.log("Telegram widget mounted");
-      }
       setTelegramReady(true);
       window.setTimeout(updateTelegramScale, 150);
     };
@@ -345,60 +246,8 @@ export default function SocialAuthButtons({
     };
     mountNode.appendChild(script);
 
-    const attachAttemptListeners = () => {
-      const widgetIframe = mountNode.querySelector("iframe");
-      if (!widgetIframe) {
-        return;
-      }
-
-      const markTelegramAttemptStarted = () => {
-        startTelegramAuthTimeout();
-      };
-
-      widgetIframe.addEventListener("focus", markTelegramAttemptStarted);
-      widgetIframe.addEventListener("click", markTelegramAttemptStarted, {
-        once: true,
-      });
-      widgetIframe.addEventListener("mousedown", markTelegramAttemptStarted, {
-        once: true,
-      });
-      widgetIframe.addEventListener("touchstart", markTelegramAttemptStarted, {
-        once: true,
-      });
-      widgetIframe.addEventListener("pointerdown", markTelegramAttemptStarted, {
-        once: true,
-      });
-
-      return () => {
-        widgetIframe.removeEventListener("focus", markTelegramAttemptStarted);
-        widgetIframe.removeEventListener(
-          "click",
-          markTelegramAttemptStarted,
-        );
-        widgetIframe.removeEventListener(
-          "mousedown",
-          markTelegramAttemptStarted,
-        );
-        widgetIframe.removeEventListener(
-          "touchstart",
-          markTelegramAttemptStarted,
-        );
-        widgetIframe.removeEventListener(
-          "pointerdown",
-          markTelegramAttemptStarted,
-        );
-      };
-    };
-
-    let detachAttemptListeners: (() => void) | undefined;
-    const attemptListenerTimer = window.setTimeout(() => {
-      detachAttemptListeners = attachAttemptListeners();
-    }, 200);
-
     return () => {
-      window.clearTimeout(attemptListenerTimer);
-      detachAttemptListeners?.();
-      clearTelegramAuthTimeout();
+      delete (window as any)[callbackName];
       mountNode.innerHTML = "";
     };
   }, [isTelegramWebApp, telegramBotUsername]);
@@ -411,12 +260,12 @@ export default function SocialAuthButtons({
     startAuth();
 
     if (!googleClientId) {
-      onErrorRef.current("Google login is not configured.");
+      onError("Google login is not configured.");
       return;
     }
 
     if (!googleReady) {
-      onErrorRef.current("Google login is loading. Please try again.");
+      onError("Google login is loading. Please try again.");
     }
   };
 
@@ -425,22 +274,21 @@ export default function SocialAuthButtons({
       return;
     }
 
+    startAuth();
+
     const initData = getTelegramWebAppInitData();
     if (initData) {
-      startTelegramAuthTimeout();
       void runSuccessfulAuth(() => loginWithTelegram({ init_data: initData }));
       return;
     }
 
-    startAuth();
-
     if (!telegramBotUsername) {
-      onErrorRef.current("Telegram login is not configured.");
+      onError("Telegram login is not configured.");
       return;
     }
 
     if (!telegramReady) {
-      onErrorRef.current("Telegram login is loading. Please try again.");
+      onError("Telegram login is loading. Please try again.");
     }
   };
 
