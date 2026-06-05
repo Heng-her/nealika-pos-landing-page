@@ -50,15 +50,11 @@ interface TelegramWebApp {
   initData?: string;
 }
 
-type TelegramAuthCallback = (user: TelegramWidgetAuthData) => void;
-
 declare global {
   interface Window {
     Telegram?: {
       WebApp?: TelegramWebApp;
     };
-    __telegramAuthProxy?: TelegramAuthCallback | null;
-    onTelegramAuth?: TelegramAuthCallback;
     google?: {
       accounts: GoogleIdentityAccounts;
     };
@@ -66,20 +62,6 @@ declare global {
 }
 
 const scriptPromises = new Map<string, Promise<void>>();
-let telegramAuthHandler: TelegramAuthCallback | null = null;
-
-function logDev(message: string, data?: unknown) {
-  if (!import.meta.env.DEV) {
-    return;
-  }
-
-  if (data === undefined) {
-    console.log(message);
-    return;
-  }
-
-  console.log(message, data);
-}
 
 function loadScript(scriptId: string, src: string) {
   if (typeof document === "undefined") {
@@ -155,56 +137,4 @@ export function getTelegramWebAppInitData() {
   }
 
   return window.Telegram?.WebApp?.initData || "";
-}
-
-export function readTelegramAuthResultFromHash() {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const match = window.location.hash.match(
-    /[#?&]tgAuthResult=([A-Za-z0-9_=-]*)$/,
-  );
-
-  if (!match) {
-    return null;
-  }
-
-  try {
-    window.location.hash = window.location.hash.replace(match[0], "");
-
-    let data = match[1] || "";
-    data = data.replace(/-/g, "+").replace(/_/g, "/");
-
-    const pad = data.length % 4;
-    if (pad > 1) {
-      data += "=".repeat(4 - pad);
-    }
-
-    return JSON.parse(window.atob(data)) as TelegramWidgetAuthData;
-  } catch {
-    return null;
-  }
-}
-
-function attachTelegramAuthCallback() {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.onTelegramAuth = (user: TelegramWidgetAuthData) => {
-    logDev("Telegram auth payload received", user);
-    telegramAuthHandler?.(user);
-  };
-}
-
-export function setTelegramAuthHandler(handler: TelegramAuthCallback | null) {
-  telegramAuthHandler = handler;
-
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.__telegramAuthProxy = handler;
-  attachTelegramAuthCallback();
 }

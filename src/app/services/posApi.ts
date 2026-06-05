@@ -197,19 +197,6 @@ const REGISTER_LIMITS: Record<string, string> = {
   enterprise: "Unlimited registers",
 };
 
-function logDev(message: string, data?: unknown) {
-  if (!import.meta.env.DEV) {
-    return;
-  }
-
-  if (data === undefined) {
-    console.log(message);
-    return;
-  }
-
-  console.log(message, data);
-}
-
 function getApiBaseUrl() {
   return (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL).replace(
     /\/+$/,
@@ -479,12 +466,10 @@ export async function loginWithGoogle(idToken: string) {
 }
 
 export async function loginWithTelegram(payload: TelegramAuthPayload) {
-  logDev("Calling backend /api/auth/telegram", payload);
   const data = await apiRequest<VerifyOtpResponse>("/api/auth/telegram", {
     method: "POST",
     body: payload,
   });
-  logDev("Telegram backend response", data);
 
   if (data?.token) {
     setStoredAuthToken(data.token);
