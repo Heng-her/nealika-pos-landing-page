@@ -31,6 +31,18 @@ export default defineConfig({
     },
   },
 
+
+  server: {
+    // Enable CORS for development server
+    cors: true,
+    host: true,
+    allowedHosts: true,
+    port: 5173,
+  },
+    // Set the port to 5173, which is the default for Vite
+ 
+
+
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
 })
