@@ -1,5 +1,7 @@
 const GOOGLE_IDENTITY_SCRIPT_ID = "google-identity-services";
 const TELEGRAM_WEBAPP_SCRIPT_ID = "telegram-webapp-sdk";
+const TELEGRAM_AUTH_CALLBACK_FLAG = "telegramAuthCallback";
+const TELEGRAM_AUTH_MESSAGE_TYPE = "nealika:telegram-auth";
 
 const GOOGLE_IDENTITY_SCRIPT_URL = "https://accounts.google.com/gsi/client";
 const TELEGRAM_WEBAPP_SCRIPT_URL = "https://telegram.org/js/telegram-web-app.js";
@@ -50,11 +52,15 @@ interface TelegramWebApp {
   initData?: string;
 }
 
+type TelegramAuthCallback = (user: TelegramWidgetAuthData) => void;
+
 declare global {
   interface Window {
     Telegram?: {
       WebApp?: TelegramWebApp;
     };
+    __telegramMessageBridgeReady?: boolean;
+    onTelegramAuth?: TelegramAuthCallback;
     google?: {
       accounts: GoogleIdentityAccounts;
     };
@@ -62,6 +68,20 @@ declare global {
 }
 
 const scriptPromises = new Map<string, Promise<void>>();
+let telegramAuthHandler: TelegramAuthCallback | null = null;
+
+function logDev(message: string, data?: unknown) {
+  if (!import.meta.env.DEV) {
+    return;
+  }
+
+  if (data === undefined) {
+    console.log(message);
+    return;
+  }
+
+  console.log(message, data);
+}
 
 function loadScript(scriptId: string, src: string) {
   if (typeof document === "undefined") {
@@ -137,4 +157,135 @@ export function getTelegramWebAppInitData() {
   }
 
   return window.Telegram?.WebApp?.initData || "";
+}
+
+function mapTelegramAuthParams(
+  searchParams: URLSearchParams,
+): TelegramWidgetAuthData | null {
+  const id = searchParams.get("id");
+  const authDate = searchParams.get("auth_date");
+  const hash = searchParams.get("hash");
+
+  if (!id || !authDate || !hash) {
+    return null;
+  }
+
+  return {
+    auth_date: authDate,
+    first_name: searchParams.get("first_name") || undefined,
+    hash,
+    id,
+    last_name: searchParams.get("last_name") || undefined,
+    photo_url: searchParams.get("photo_url") || undefined,
+    username: searchParams.get("username") || undefined,
+  };
+}
+
+function emitTelegramAuth(user: TelegramWidgetAuthData) {
+  logDev("Telegram auth payload received", user);
+  telegramAuthHandler?.(user);
+}
+
+function ensureTelegramMessageBridge() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (window.__telegramMessageBridgeReady) {
+    return;
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.origin !== window.location.origin) {
+      return;
+    }
+
+    const message = event.data;
+    if (
+      !message ||
+      typeof message !== "object" ||
+      (message as { type?: string }).type !== TELEGRAM_AUTH_MESSAGE_TYPE
+    ) {
+      return;
+    }
+
+    const payload = (message as { payload?: TelegramWidgetAuthData }).payload;
+    if (!payload) {
+      return;
+    }
+
+    emitTelegramAuth(payload);
+  });
+
+  window.__telegramMessageBridgeReady = true;
+}
+
+export function getTelegramAuthRedirectUrl() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.set(TELEGRAM_AUTH_CALLBACK_FLAG, "1");
+  return url.toString();
+}
+
+export function getTelegramAuthResultFromUrl() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const url = new URL(window.location.href);
+  return mapTelegramAuthParams(url.searchParams);
+}
+
+export function isTelegramAuthCallbackWindow() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const url = new URL(window.location.href);
+  return (
+    url.searchParams.get(TELEGRAM_AUTH_CALLBACK_FLAG) === "1" &&
+    Boolean(mapTelegramAuthParams(url.searchParams))
+  );
+}
+
+export function forwardTelegramAuthResultToOpener() {
+  if (typeof window === "undefined" || !window.opener || window.opener === window) {
+    return false;
+  }
+
+  const payload = getTelegramAuthResultFromUrl();
+  if (!payload) {
+    return false;
+  }
+
+  logDev("Forwarding Telegram auth payload to opener", payload);
+  window.opener.postMessage(
+    {
+      type: TELEGRAM_AUTH_MESSAGE_TYPE,
+      payload,
+    },
+    window.location.origin,
+  );
+
+  window.setTimeout(() => {
+    window.close();
+  }, 150);
+
+  return true;
+}
+
+export function setTelegramAuthHandler(handler: TelegramAuthCallback | null) {
+  telegramAuthHandler = handler;
+
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  ensureTelegramMessageBridge();
+  window.onTelegramAuth = (user: TelegramWidgetAuthData) => {
+    emitTelegramAuth(user);
+  };
 }

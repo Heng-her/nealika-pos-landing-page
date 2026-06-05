@@ -25,8 +25,13 @@ import {
   mapPackageToDisplayPackage,
   type DisplayPackage,
 } from "./services/posApi";
+import {
+  forwardTelegramAuthResultToOpener,
+  isTelegramAuthCallbackWindow,
+} from "./services/socialAuth";
 
 export default function App() {
+  const isTelegramPopupCallback = isTelegramAuthCallbackWindow();
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [showLoginPage, setShowLoginPage] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(
@@ -47,6 +52,21 @@ export default function App() {
   const [lastScrollY, setLastScrollY] = useState(0);
 
   useEffect(() => {
+    if (isTelegramPopupCallback) {
+      forwardTelegramAuthResultToOpener();
+      return;
+    }
+
+    return;
+  }, [isTelegramPopupCallback]);
+
+  useEffect(() => {
+    if (isTelegramPopupCallback) {
+      setIsLoadingPackages(false);
+      setIsCheckingAuth(false);
+      return;
+    }
+
     let isMounted = true;
 
     const loadInitialState = async () => {
@@ -92,7 +112,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [isTelegramPopupCallback]);
 
   useEffect(() => {
     if (!selectedPackageId && pricingPlans.length > 0) {
@@ -199,6 +219,22 @@ export default function App() {
 
   if (isAuthenticated && !isCheckingAuth) {
     return <Dashboard onLogout={handleLogout} />;
+  }
+
+  if (isTelegramPopupCallback) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+        <div className="bg-white rounded-2xl shadow-lg p-8 text-center max-w-sm w-full">
+          <img src={logo} alt="Nealika" className="h-12 mx-auto mb-4" />
+          <h1 className="text-xl font-semibold text-slate-900 mb-2">
+            Completing Telegram Login
+          </h1>
+          <p className="text-slate-600">
+            You can close this window if it does not close automatically.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (showCheckout) {

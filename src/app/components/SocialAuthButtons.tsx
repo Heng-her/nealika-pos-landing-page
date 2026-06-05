@@ -6,6 +6,8 @@ import {
 } from "../services/posApi";
 import {
   ensureGoogleIdentityScript,
+  getTelegramAuthRedirectUrl,
+  setTelegramAuthHandler,
   ensureTelegramWebAppScript,
   getGoogleClientId,
   getTelegramBotUsername,
@@ -31,9 +33,13 @@ export default function SocialAuthButtons({
   const googleButtonMountRef = useRef<HTMLDivElement | null>(null);
   const telegramButtonShellRef = useRef<HTMLDivElement | null>(null);
   const telegramButtonMountRef = useRef<HTMLDivElement | null>(null);
-  const telegramCallbackNameRef = useRef(
-    `__nealikaTelegramAuth_${Math.random().toString(36).slice(2)}`,
-  );
+  const onAuthSuccessRef = useRef(onAuthSuccess);
+  const onErrorRef = useRef(onError);
+  const onStartRef = useRef(onStart);
+  const telegramAuthTimeoutRef = useRef<number | null>(null);
+  const telegramFocusTimeoutRef = useRef<number | null>(null);
+  const telegramAuthPendingRef = useRef(false);
+  const telegramPopupOpenedRef = useRef(false);
 
   const [googleButtonWidth, setGoogleButtonWidth] = useState(0);
   const [googleReady, setGoogleReady] = useState(false);
@@ -46,8 +52,47 @@ export default function SocialAuthButtons({
   const telegramBotUsername = getTelegramBotUsername();
   const isDisabled = disabled || isSubmitting;
 
+  useEffect(() => {
+    onAuthSuccessRef.current = onAuthSuccess;
+    onErrorRef.current = onError;
+    onStartRef.current = onStart;
+  }, [onAuthSuccess, onError, onStart]);
+
   const startAuth = () => {
-    onStart?.();
+    onStartRef.current?.();
+  };
+
+  const clearTelegramAuthTimeout = () => {
+    if (telegramAuthTimeoutRef.current !== null) {
+      window.clearTimeout(telegramAuthTimeoutRef.current);
+      telegramAuthTimeoutRef.current = null;
+    }
+
+    if (telegramFocusTimeoutRef.current !== null) {
+      window.clearTimeout(telegramFocusTimeoutRef.current);
+      telegramFocusTimeoutRef.current = null;
+    }
+
+    telegramAuthPendingRef.current = false;
+    telegramPopupOpenedRef.current = false;
+  };
+
+  const startTelegramAuthTimeout = () => {
+    if (telegramAuthPendingRef.current) {
+      return;
+    }
+
+    if (import.meta.env.DEV) {
+      console.log("Telegram auth started");
+    }
+
+    startAuth();
+    telegramAuthPendingRef.current = true;
+    telegramAuthTimeoutRef.current = window.setTimeout(() => {
+      telegramAuthTimeoutRef.current = null;
+      telegramAuthPendingRef.current = false;
+      onErrorRef.current("Telegram login was not completed.");
+    }, 60000);
   };
 
   const runSuccessfulAuth = async (authAction: () => Promise<unknown>) => {
@@ -56,9 +101,11 @@ export default function SocialAuthButtons({
 
     try {
       await authAction();
-      await onAuthSuccess();
+      clearTelegramAuthTimeout();
+      await onAuthSuccessRef.current();
     } catch (error) {
-      onError(getErrorMessage(error));
+      clearTelegramAuthTimeout();
+      onErrorRef.current(getErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -141,6 +188,70 @@ export default function SocialAuthButtons({
   }, []);
 
   useEffect(() => {
+    const handleBlur = () => {
+      if (telegramAuthPendingRef.current) {
+        telegramPopupOpenedRef.current = true;
+      }
+    };
+
+    const handleFocus = () => {
+      if (!telegramAuthPendingRef.current || !telegramPopupOpenedRef.current) {
+        return;
+      }
+
+      if (telegramFocusTimeoutRef.current !== null) {
+        window.clearTimeout(telegramFocusTimeoutRef.current);
+      }
+
+      telegramFocusTimeoutRef.current = window.setTimeout(() => {
+        telegramFocusTimeoutRef.current = null;
+
+        if (!telegramAuthPendingRef.current) {
+          return;
+        }
+
+        clearTelegramAuthTimeout();
+        onErrorRef.current("Telegram login was not completed.");
+      }, 1200);
+    };
+
+    window.addEventListener("blur", handleBlur);
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      window.removeEventListener("blur", handleBlur);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isTelegramWebApp) {
+      setTelegramAuthHandler(null);
+      clearTelegramAuthTimeout();
+      return;
+    }
+
+    setTelegramAuthHandler((user: TelegramWidgetAuthData) => {
+      void runSuccessfulAuth(() =>
+        loginWithTelegram({
+          auth_date: user.auth_date,
+          first_name: user.first_name,
+          hash: user.hash,
+          id: user.id,
+          last_name: user.last_name,
+          photo_url: user.photo_url,
+          username: user.username,
+        }),
+      );
+    });
+
+    return () => {
+      setTelegramAuthHandler(null);
+      clearTelegramAuthTimeout();
+    };
+  }, [isTelegramWebApp]);
+
+  useEffect(() => {
     if (!googleClientId || !googleButtonMountRef.current || !googleButtonWidth) {
       setGoogleReady(false);
       return;
@@ -164,7 +275,7 @@ export default function SocialAuthButtons({
             const credential = response.credential;
 
             if (!credential) {
-              onError("Google login failed. Please try again.");
+              onErrorRef.current("Google login failed. Please try again.");
               return;
             }
 
@@ -196,7 +307,7 @@ export default function SocialAuthButtons({
     return () => {
       isMounted = false;
     };
-  }, [googleButtonWidth, googleClientId, onError]);
+  }, [googleButtonWidth, googleClientId]);
 
   useEffect(() => {
     if (
@@ -208,21 +319,6 @@ export default function SocialAuthButtons({
       return;
     }
 
-    const callbackName = telegramCallbackNameRef.current;
-    (window as any)[callbackName] = (user: TelegramWidgetAuthData) => {
-      void runSuccessfulAuth(() =>
-        loginWithTelegram({
-          auth_date: user.auth_date,
-          first_name: user.first_name,
-          hash: user.hash,
-          id: user.id,
-          last_name: user.last_name,
-          photo_url: user.photo_url,
-          username: user.username,
-        }),
-      );
-    };
-
     const mountNode = telegramButtonMountRef.current;
     mountNode.innerHTML = "";
     setTelegramReady(false);
@@ -231,13 +327,16 @@ export default function SocialAuthButtons({
     script.async = true;
     script.src = "https://telegram.org/js/telegram-widget.js?22";
     script.setAttribute("data-lang", "en");
-    script.setAttribute("data-onauth", `${callbackName}(user)`);
+    script.setAttribute("data-auth-url", getTelegramAuthRedirectUrl());
     script.setAttribute("data-radius", "8");
     script.setAttribute("data-request-access", "write");
     script.setAttribute("data-size", "large");
     script.setAttribute("data-telegram-login", telegramBotUsername);
     script.setAttribute("data-userpic", "false");
     script.onload = () => {
+      if (import.meta.env.DEV) {
+        console.log("Telegram widget mounted");
+      }
       setTelegramReady(true);
       window.setTimeout(updateTelegramScale, 150);
     };
@@ -246,8 +345,53 @@ export default function SocialAuthButtons({
     };
     mountNode.appendChild(script);
 
+    const attachAttemptListeners = () => {
+      const widgetIframe = mountNode.querySelector("iframe");
+      if (!widgetIframe) {
+        return;
+      }
+
+      const markTelegramAttemptStarted = () => {
+        startTelegramAuthTimeout();
+      };
+
+      widgetIframe.addEventListener("focus", markTelegramAttemptStarted);
+      widgetIframe.addEventListener("mousedown", markTelegramAttemptStarted, {
+        once: true,
+      });
+      widgetIframe.addEventListener("touchstart", markTelegramAttemptStarted, {
+        once: true,
+      });
+      widgetIframe.addEventListener("pointerdown", markTelegramAttemptStarted, {
+        once: true,
+      });
+
+      return () => {
+        widgetIframe.removeEventListener("focus", markTelegramAttemptStarted);
+        widgetIframe.removeEventListener(
+          "mousedown",
+          markTelegramAttemptStarted,
+        );
+        widgetIframe.removeEventListener(
+          "touchstart",
+          markTelegramAttemptStarted,
+        );
+        widgetIframe.removeEventListener(
+          "pointerdown",
+          markTelegramAttemptStarted,
+        );
+      };
+    };
+
+    let detachAttemptListeners: (() => void) | undefined;
+    const attemptListenerTimer = window.setTimeout(() => {
+      detachAttemptListeners = attachAttemptListeners();
+    }, 200);
+
     return () => {
-      delete (window as any)[callbackName];
+      window.clearTimeout(attemptListenerTimer);
+      detachAttemptListeners?.();
+      clearTelegramAuthTimeout();
       mountNode.innerHTML = "";
     };
   }, [isTelegramWebApp, telegramBotUsername]);
@@ -260,12 +404,12 @@ export default function SocialAuthButtons({
     startAuth();
 
     if (!googleClientId) {
-      onError("Google login is not configured.");
+      onErrorRef.current("Google login is not configured.");
       return;
     }
 
     if (!googleReady) {
-      onError("Google login is loading. Please try again.");
+      onErrorRef.current("Google login is loading. Please try again.");
     }
   };
 
@@ -274,21 +418,24 @@ export default function SocialAuthButtons({
       return;
     }
 
-    startAuth();
-
     const initData = getTelegramWebAppInitData();
     if (initData) {
+      startTelegramAuthTimeout();
       void runSuccessfulAuth(() => loginWithTelegram({ init_data: initData }));
       return;
     }
 
+    startTelegramAuthTimeout();
+
     if (!telegramBotUsername) {
-      onError("Telegram login is not configured.");
+      clearTelegramAuthTimeout();
+      onErrorRef.current("Telegram login is not configured.");
       return;
     }
 
     if (!telegramReady) {
-      onError("Telegram login is loading. Please try again.");
+      clearTelegramAuthTimeout();
+      onErrorRef.current("Telegram login is loading. Please try again.");
     }
   };
 
