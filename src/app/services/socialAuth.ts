@@ -1,4 +1,5 @@
 const GOOGLE_IDENTITY_SCRIPT_ID = "google-identity-services";
+const TELEGRAM_AUTH_CALLBACK_SCRIPT_ID = "telegram-auth-callback-bridge";
 const TELEGRAM_WEBAPP_SCRIPT_ID = "telegram-webapp-sdk";
 
 const GOOGLE_IDENTITY_SCRIPT_URL = "https://accounts.google.com/gsi/client";
@@ -50,11 +51,15 @@ interface TelegramWebApp {
   initData?: string;
 }
 
+type TelegramAuthCallback = (user: TelegramWidgetAuthData) => void;
+
 declare global {
   interface Window {
     Telegram?: {
       WebApp?: TelegramWebApp;
     };
+    __telegramAuthProxy?: TelegramAuthCallback | null;
+    onTelegramAuth?: TelegramAuthCallback;
     google?: {
       accounts: GoogleIdentityAccounts;
     };
@@ -62,6 +67,7 @@ declare global {
 }
 
 const scriptPromises = new Map<string, Promise<void>>();
+let telegramAuthHandler: TelegramAuthCallback | null = null;
 
 function loadScript(scriptId: string, src: string) {
   if (typeof document === "undefined") {
@@ -137,4 +143,72 @@ export function getTelegramWebAppInitData() {
   }
 
   return window.Telegram?.WebApp?.initData || "";
+}
+
+export function readTelegramAuthResultFromHash() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const match = window.location.hash.match(
+    /[#?&]tgAuthResult=([A-Za-z0-9_=-]*)$/,
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  try {
+    window.location.hash = window.location.hash.replace(match[0], "");
+
+    let data = match[1] || "";
+    data = data.replace(/-/g, "+").replace(/_/g, "/");
+
+    const pad = data.length % 4;
+    if (pad > 1) {
+      data += "=".repeat(4 - pad);
+    }
+
+    return JSON.parse(window.atob(data)) as TelegramWidgetAuthData;
+  } catch {
+    return null;
+  }
+}
+
+function ensureTelegramAuthCallbackBridge() {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  const existingBridge = document.getElementById(TELEGRAM_AUTH_CALLBACK_SCRIPT_ID);
+  if (existingBridge) {
+    return;
+  }
+
+  const script = document.createElement("script");
+  script.id = TELEGRAM_AUTH_CALLBACK_SCRIPT_ID;
+  script.text = `
+    window.__telegramAuthProxy = window.__telegramAuthProxy || null;
+    window.onTelegramAuth = window.onTelegramAuth || function(user) {
+      if (typeof window.__telegramAuthProxy === "function") {
+        window.__telegramAuthProxy(user);
+      }
+    };
+  `;
+
+  document.head.appendChild(script);
+}
+
+export function setTelegramAuthHandler(handler: TelegramAuthCallback | null) {
+  telegramAuthHandler = handler;
+
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  ensureTelegramAuthCallbackBridge();
+  window.__telegramAuthProxy = handler;
+  window.onTelegramAuth = (user: TelegramWidgetAuthData) => {
+    telegramAuthHandler?.(user);
+  };
 }
