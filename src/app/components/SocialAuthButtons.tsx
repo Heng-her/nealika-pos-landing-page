@@ -209,8 +209,7 @@ export default function SocialAuthButtons({
     }
 
     const callbackName = telegramCallbackNameRef.current;
-    const telegramWindow = window as Window & Record<string, unknown>;
-    telegramWindow[callbackName] = (user: TelegramWidgetAuthData) => {
+    (window as any)[callbackName] = (user: TelegramWidgetAuthData) => {
       void runSuccessfulAuth(() =>
         loginWithTelegram({
           auth_date: user.auth_date,
@@ -248,7 +247,7 @@ export default function SocialAuthButtons({
     mountNode.appendChild(script);
 
     return () => {
-      delete telegramWindow[callbackName];
+      delete (window as any)[callbackName];
       mountNode.innerHTML = "";
     };
   }, [isTelegramWebApp, telegramBotUsername]);
