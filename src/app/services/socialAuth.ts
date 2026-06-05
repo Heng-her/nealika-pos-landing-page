@@ -1,5 +1,4 @@
 const GOOGLE_IDENTITY_SCRIPT_ID = "google-identity-services";
-const TELEGRAM_AUTH_CALLBACK_SCRIPT_ID = "telegram-auth-callback-bridge";
 const TELEGRAM_WEBAPP_SCRIPT_ID = "telegram-webapp-sdk";
 
 const GOOGLE_IDENTITY_SCRIPT_URL = "https://accounts.google.com/gsi/client";
@@ -68,6 +67,19 @@ declare global {
 
 const scriptPromises = new Map<string, Promise<void>>();
 let telegramAuthHandler: TelegramAuthCallback | null = null;
+
+function logDev(message: string, data?: unknown) {
+  if (!import.meta.env.DEV) {
+    return;
+  }
+
+  if (data === undefined) {
+    console.log(message);
+    return;
+  }
+
+  console.log(message, data);
+}
 
 function loadScript(scriptId: string, src: string) {
   if (typeof document === "undefined") {
@@ -175,28 +187,15 @@ export function readTelegramAuthResultFromHash() {
   }
 }
 
-function ensureTelegramAuthCallbackBridge() {
-  if (typeof document === "undefined") {
+function attachTelegramAuthCallback() {
+  if (typeof window === "undefined") {
     return;
   }
 
-  const existingBridge = document.getElementById(TELEGRAM_AUTH_CALLBACK_SCRIPT_ID);
-  if (existingBridge) {
-    return;
-  }
-
-  const script = document.createElement("script");
-  script.id = TELEGRAM_AUTH_CALLBACK_SCRIPT_ID;
-  script.text = `
-    window.__telegramAuthProxy = window.__telegramAuthProxy || null;
-    window.onTelegramAuth = window.onTelegramAuth || function(user) {
-      if (typeof window.__telegramAuthProxy === "function") {
-        window.__telegramAuthProxy(user);
-      }
-    };
-  `;
-
-  document.head.appendChild(script);
+  window.onTelegramAuth = (user: TelegramWidgetAuthData) => {
+    logDev("Telegram auth payload received", user);
+    telegramAuthHandler?.(user);
+  };
 }
 
 export function setTelegramAuthHandler(handler: TelegramAuthCallback | null) {
@@ -206,9 +205,6 @@ export function setTelegramAuthHandler(handler: TelegramAuthCallback | null) {
     return;
   }
 
-  ensureTelegramAuthCallbackBridge();
   window.__telegramAuthProxy = handler;
-  window.onTelegramAuth = (user: TelegramWidgetAuthData) => {
-    telegramAuthHandler?.(user);
-  };
+  attachTelegramAuthCallback();
 }

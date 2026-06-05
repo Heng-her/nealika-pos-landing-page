@@ -32,8 +32,13 @@ export default function SocialAuthButtons({
   const googleButtonMountRef = useRef<HTMLDivElement | null>(null);
   const telegramButtonShellRef = useRef<HTMLDivElement | null>(null);
   const telegramButtonMountRef = useRef<HTMLDivElement | null>(null);
+  const onAuthSuccessRef = useRef(onAuthSuccess);
+  const onErrorRef = useRef(onError);
+  const onStartRef = useRef(onStart);
   const telegramAuthTimeoutRef = useRef<number | null>(null);
+  const telegramAuthReturnFocusRef = useRef<number | null>(null);
   const telegramAuthPendingRef = useRef(false);
+  const telegramPopupOpenedRef = useRef(false);
 
   const [googleButtonWidth, setGoogleButtonWidth] = useState(0);
   const [googleReady, setGoogleReady] = useState(false);
@@ -46,8 +51,14 @@ export default function SocialAuthButtons({
   const telegramBotUsername = getTelegramBotUsername();
   const isDisabled = disabled || isSubmitting;
 
+  useEffect(() => {
+    onAuthSuccessRef.current = onAuthSuccess;
+    onErrorRef.current = onError;
+    onStartRef.current = onStart;
+  }, [onAuthSuccess, onError, onStart]);
+
   const startAuth = () => {
-    onStart?.();
+    onStartRef.current?.();
   };
 
   const clearTelegramAuthTimeout = () => {
@@ -55,7 +66,12 @@ export default function SocialAuthButtons({
       window.clearTimeout(telegramAuthTimeoutRef.current);
       telegramAuthTimeoutRef.current = null;
     }
+    if (telegramAuthReturnFocusRef.current !== null) {
+      window.clearTimeout(telegramAuthReturnFocusRef.current);
+      telegramAuthReturnFocusRef.current = null;
+    }
     telegramAuthPendingRef.current = false;
+    telegramPopupOpenedRef.current = false;
   };
 
   const startTelegramAuthTimeout = () => {
@@ -63,12 +79,17 @@ export default function SocialAuthButtons({
       return;
     }
 
+    if (import.meta.env.DEV) {
+      console.log("Telegram auth started");
+    }
+
     startAuth();
     telegramAuthPendingRef.current = true;
     telegramAuthTimeoutRef.current = window.setTimeout(() => {
       telegramAuthTimeoutRef.current = null;
       telegramAuthPendingRef.current = false;
-      onError("Telegram login was not completed. Please try again.");
+      telegramPopupOpenedRef.current = false;
+      onErrorRef.current("Telegram login was not completed.");
     }, 60000);
   };
 
@@ -79,10 +100,10 @@ export default function SocialAuthButtons({
     try {
       await authAction();
       clearTelegramAuthTimeout();
-      await onAuthSuccess();
+      await onAuthSuccessRef.current();
     } catch (error) {
       clearTelegramAuthTimeout();
-      onError(getErrorMessage(error));
+      onErrorRef.current(getErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -165,6 +186,45 @@ export default function SocialAuthButtons({
   }, []);
 
   useEffect(() => {
+    const handleWindowBlur = () => {
+      if (telegramAuthPendingRef.current) {
+        telegramPopupOpenedRef.current = true;
+      }
+    };
+
+    const handleWindowFocus = () => {
+      if (
+        !telegramAuthPendingRef.current ||
+        !telegramPopupOpenedRef.current ||
+        typeof window === "undefined"
+      ) {
+        return;
+      }
+
+      if (telegramAuthReturnFocusRef.current !== null) {
+        window.clearTimeout(telegramAuthReturnFocusRef.current);
+      }
+
+      telegramAuthReturnFocusRef.current = window.setTimeout(() => {
+        telegramAuthReturnFocusRef.current = null;
+
+        if (telegramAuthPendingRef.current) {
+          clearTelegramAuthTimeout();
+          onErrorRef.current("Telegram login was not completed.");
+        }
+      }, 1500);
+    };
+
+    window.addEventListener("blur", handleWindowBlur);
+    window.addEventListener("focus", handleWindowFocus);
+
+    return () => {
+      window.removeEventListener("blur", handleWindowBlur);
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, []);
+
+  useEffect(() => {
     if (isTelegramWebApp) {
       setTelegramAuthHandler(null);
       clearTelegramAuthTimeout();
@@ -172,10 +232,6 @@ export default function SocialAuthButtons({
     }
 
     setTelegramAuthHandler((user: TelegramWidgetAuthData) => {
-      if (import.meta.env.DEV) {
-        console.log("Telegram auth payload received", user);
-      }
-
       void runSuccessfulAuth(() =>
         loginWithTelegram({
           auth_date: user.auth_date,
@@ -193,7 +249,7 @@ export default function SocialAuthButtons({
       setTelegramAuthHandler(null);
       clearTelegramAuthTimeout();
     };
-  }, [isTelegramWebApp, onAuthSuccess, onError]);
+  }, [isTelegramWebApp]);
 
   useEffect(() => {
     if (!googleClientId || !googleButtonMountRef.current || !googleButtonWidth) {
@@ -219,7 +275,7 @@ export default function SocialAuthButtons({
             const credential = response.credential;
 
             if (!credential) {
-              onError("Google login failed. Please try again.");
+              onErrorRef.current("Google login failed. Please try again.");
               return;
             }
 
@@ -251,7 +307,7 @@ export default function SocialAuthButtons({
     return () => {
       isMounted = false;
     };
-  }, [googleButtonWidth, googleClientId, onError]);
+  }, [googleButtonWidth, googleClientId]);
 
   useEffect(() => {
     if (
@@ -278,6 +334,9 @@ export default function SocialAuthButtons({
     script.setAttribute("data-telegram-login", telegramBotUsername);
     script.setAttribute("data-userpic", "false");
     script.onload = () => {
+      if (import.meta.env.DEV) {
+        console.log("Telegram widget mounted");
+      }
       setTelegramReady(true);
       window.setTimeout(updateTelegramScale, 150);
     };
@@ -352,12 +411,12 @@ export default function SocialAuthButtons({
     startAuth();
 
     if (!googleClientId) {
-      onError("Google login is not configured.");
+      onErrorRef.current("Google login is not configured.");
       return;
     }
 
     if (!googleReady) {
-      onError("Google login is loading. Please try again.");
+      onErrorRef.current("Google login is loading. Please try again.");
     }
   };
 
@@ -376,12 +435,12 @@ export default function SocialAuthButtons({
     startAuth();
 
     if (!telegramBotUsername) {
-      onError("Telegram login is not configured.");
+      onErrorRef.current("Telegram login is not configured.");
       return;
     }
 
     if (!telegramReady) {
-      onError("Telegram login is loading. Please try again.");
+      onErrorRef.current("Telegram login is loading. Please try again.");
     }
   };
 
