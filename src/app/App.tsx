@@ -19,9 +19,10 @@ import logo from "@/imports/logo-nealika.png";
 import {
   clearStoredAuthToken,
   getErrorMessage,
-  getMe,
   getPackages,
+  getProfile,
   getStoredAuthToken,
+  isUnauthorizedError,
   mapPackageToDisplayPackage,
   type DisplayPackage,
 } from "./services/posApi";
@@ -55,7 +56,7 @@ export default function App() {
 
       const [packagesResult, meResult] = await Promise.allSettled([
         getPackages(),
-        getStoredAuthToken() ? getMe() : Promise.resolve(null),
+        getStoredAuthToken() ? getProfile() : Promise.resolve(null),
       ]);
 
       if (!isMounted) {
@@ -79,8 +80,13 @@ export default function App() {
       if (meResult.status === "fulfilled") {
         setIsAuthenticated(Boolean(meResult.value));
       } else {
-        clearStoredAuthToken();
-        setIsAuthenticated(false);
+        if (isUnauthorizedError(meResult.reason)) {
+          clearStoredAuthToken();
+          setIsAuthenticated(false);
+          setShowLoginPage(true);
+        } else {
+          setIsAuthenticated(Boolean(getStoredAuthToken()));
+        }
       }
 
       setIsLoadingPackages(false);
@@ -168,10 +174,11 @@ export default function App() {
     },
   ];
 
-  const handleLogout = () => {
+  const handleLogout = (options?: { redirectToLogin?: boolean }) => {
     clearStoredAuthToken();
     setIsAuthenticated(false);
-    setShowLoginPage(false);
+    setShowLoginPage(Boolean(options?.redirectToLogin));
+    setShowCheckout(false);
   };
 
   const handleLoginSuccess = () => {
