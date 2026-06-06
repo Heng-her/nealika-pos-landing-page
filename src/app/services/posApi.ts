@@ -1,5 +1,8 @@
 const DEFAULT_API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL).trim();
-const AUTH_TOKEN_KEY = "nealika_pos_token";
+const AUTH_TOKEN_KEY = "token";
+const LEGACY_AUTH_TOKEN_KEY = "nealika_pos_token";
+const USER_INFO_KEY = "userinfo";
+const PROFILE_API_DEBUG_KEY = "profile_api_debug";
 
 type RequestMethod = "GET" | "POST" | "PUT" | "DELETE";
 
@@ -48,18 +51,24 @@ export interface ApiSubscriptionDuration {
 
 export interface AuthUser {
   id: number;
+  username?: string;
+  nickname?: string;
   name?: string;
   email?: string | null;
+  mobile?: string | null;
   phone?: string | null;
+  bio?: string | null;
   avatar?: string | null;
   business_name?: string | null;
   address?: string | null;
+  token?: string;
   [key: string]: unknown;
 }
 
 export interface VerifyOtpResponse {
   token?: string;
   user?: AuthUser | null;
+  userinfo?: AuthUser | null;
   [key: string]: unknown;
 }
 
@@ -76,13 +85,26 @@ export interface TelegramAuthPayload {
 
 export interface UserProfile {
   id?: number;
+  username?: string;
+  nickname?: string;
   name?: string;
   email?: string;
+  mobile?: string;
   phone?: string;
+  bio?: string;
   business_name?: string;
   address?: string;
   avatar?: string | null;
   [key: string]: unknown;
+}
+
+export interface UpdateProfilePayload {
+  username: string;
+  nickname?: string;
+  bio?: string;
+  avatar?: string;
+  business_name?: string;
+  address?: string;
 }
 
 export interface CurrentSubscription {
@@ -189,6 +211,10 @@ export class ApiError extends Error {
     this.code = code;
     this.data = data;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 const REGISTER_LIMITS: Record<string, string> = {
@@ -392,24 +418,229 @@ function tryParseJson(rawText: string) {
   }
 }
 
+async function readResponseBody(response: Response) {
+  const rawText = await response.text();
+  if (!rawText) {
+    return null;
+  }
+
+  return tryParseJson(rawText);
+}
+
+function extractNestedUserinfo<T extends Record<string, unknown>>(
+  value: unknown,
+): T | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if (isRecord(value.userinfo)) {
+    return value.userinfo as T;
+  }
+
+  if (isRecord(value.user)) {
+    return value.user as T;
+  }
+
+  return value as T;
+}
+
+function extractAuthToken(payload: VerifyOtpResponse | null | undefined) {
+  if (!payload) {
+    return "";
+  }
+
+  if (
+    payload.userinfo &&
+    typeof payload.userinfo.token === "string" &&
+    payload.userinfo.token.trim() !== ""
+  ) {
+    return payload.userinfo.token.trim();
+  }
+
+  if (typeof payload.token === "string" && payload.token.trim() !== "") {
+    return payload.token.trim();
+  }
+
+  if (
+    payload.user &&
+    typeof payload.user.token === "string" &&
+    payload.user.token.trim() !== ""
+  ) {
+    return payload.user.token.trim();
+  }
+
+  return "";
+}
+
+function extractAuthUserinfo(payload: VerifyOtpResponse | null | undefined) {
+  if (!payload) {
+    return null;
+  }
+
+  if (payload.userinfo && isRecord(payload.userinfo)) {
+    return payload.userinfo as AuthUser;
+  }
+
+  if (payload.user && isRecord(payload.user)) {
+    return payload.user as AuthUser;
+  }
+
+  return null;
+}
+
+function persistAuthSession(payload: VerifyOtpResponse | null | undefined) {
+  const token = extractAuthToken(payload);
+  const userinfo = extractAuthUserinfo(payload);
+
+  if (token) {
+    setStoredAuthToken(token);
+  }
+
+  if (userinfo) {
+    setStoredUserinfo(userinfo);
+  }
+}
+
+function setStoredUserinfo(userinfo: unknown) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (userinfo === null || userinfo === undefined) {
+    window.localStorage.removeItem(USER_INFO_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(USER_INFO_KEY, JSON.stringify(userinfo));
+}
+
+function buildAuthenticatedHeaders(
+  extraHeaders: Record<string, string> = {},
+) {
+  return {
+    ...extraHeaders,
+    token: getStoredAuthToken() || "",
+  };
+}
+
+function isProfileApiDebugEnabled() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return window.localStorage.getItem(PROFILE_API_DEBUG_KEY) === "1";
+}
+
+function logProfileApiDebug(label: string, value?: unknown) {
+  if (!isProfileApiDebugEnabled()) {
+    return;
+  }
+
+  if (value === undefined) {
+    console.log(label);
+    return;
+  }
+
+  console.log(label, value);
+}
+
+function createUnauthorizedError(message = "Unauthorized", data: unknown = null) {
+  clearStoredAuthToken();
+  return new ApiError(message, 401, data);
+}
+
+function createApiError(
+  fallbackMessage: string,
+  response: Response,
+  payload: unknown,
+) {
+  if (isRecord(payload)) {
+    const message =
+      typeof payload.msg === "string" && payload.msg.trim() !== ""
+        ? payload.msg
+        : fallbackMessage;
+    const code =
+      typeof payload.code === "number" ? payload.code : response.status || 500;
+    return new ApiError(message, code, "data" in payload ? payload.data : payload);
+  }
+
+  return new ApiError(
+    fallbackMessage,
+    response.status || 500,
+    payload,
+  );
+}
+
+function extractUploadPath(payload: unknown): string {
+  if (typeof payload === "string" && payload.trim() !== "") {
+    return payload.trim();
+  }
+
+  if (!isRecord(payload)) {
+    return "";
+  }
+
+  const candidateKeys = [
+    "url",
+    "path",
+    "avatar",
+    "filepath",
+    "file_path",
+    "savepath",
+    "src",
+    "fullurl",
+  ];
+
+  for (const key of candidateKeys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+
+  return "";
+}
+
 export function getStoredAuthToken() {
   if (typeof window === "undefined") {
     return "";
   }
 
-  return window.localStorage.getItem(AUTH_TOKEN_KEY) || "";
+  return (
+    window.localStorage.getItem(AUTH_TOKEN_KEY) ||
+    window.localStorage.getItem(LEGACY_AUTH_TOKEN_KEY) ||
+    ""
+  );
 }
 
 export function setStoredAuthToken(token: string) {
   if (typeof window !== "undefined") {
     window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+    window.localStorage.setItem(LEGACY_AUTH_TOKEN_KEY, token);
   }
 }
 
 export function clearStoredAuthToken() {
   if (typeof window !== "undefined") {
     window.localStorage.removeItem(AUTH_TOKEN_KEY);
+    window.localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+    window.localStorage.removeItem(USER_INFO_KEY);
   }
+}
+
+export function isUnauthorizedError(error: unknown) {
+  return error instanceof ApiError && error.code === 401;
+}
+
+export function normalizeProfileAvatarUrl(value?: string | null) {
+  const trimmedValue = (value || "").trim();
+
+  if (!trimmedValue || trimmedValue === "null") {
+    return "";
+  }
+
+  return trimmedValue;
 }
 
 export function getErrorMessage(error: unknown) {
@@ -543,9 +774,7 @@ export async function verifyOtp(phone: string, otp: string) {
     body: { phone, otp },
   });
 
-  if (data?.token) {
-    setStoredAuthToken(data.token);
-  }
+  persistAuthSession(data);
 
   return data;
 }
@@ -556,9 +785,7 @@ export async function loginWithGoogle(idToken: string) {
     body: { id_token: idToken },
   });
 
-  if (data?.token) {
-    setStoredAuthToken(data.token);
-  }
+  persistAuthSession(data);
 
   return data;
 }
@@ -569,9 +796,7 @@ export async function loginWithTelegram(payload: TelegramAuthPayload) {
     body: payload,
   });
 
-  if (data?.token) {
-    setStoredAuthToken(data.token);
-  }
+  persistAuthSession(data);
 
   return data;
 }
@@ -607,17 +832,187 @@ export async function getMe() {
 }
 
 export async function getProfile() {
-  return apiRequest<UserProfile>("/profile", {
-    requiresAuth: true,
+  const token = getStoredAuthToken();
+  const requestUrl = buildUrl("/user/profile");
+
+  logProfileApiDebug("[Profile GET] url:", requestUrl);
+  logProfileApiDebug("[Profile GET] method:", "GET");
+  logProfileApiDebug("[Profile GET] token exists:", Boolean(token));
+
+  const response = await fetch(requestUrl, {
+    method: "GET",
+    headers: {
+      token: token || "",
+    },
   });
+  const payload = await readResponseBody(response);
+
+  logProfileApiDebug("[Profile GET] status:", response.status);
+  logProfileApiDebug("[Profile GET] response:", payload);
+
+  if (response.status === 401) {
+    throw createUnauthorizedError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Unauthorized",
+      payload,
+    );
+  }
+
+  if (!response.ok) {
+    throw createApiError("Failed to get profile", response, payload);
+  }
+
+  if (!isRecord(payload) || payload.code !== 1) {
+    if (isRecord(payload) && payload.code === 401) {
+      throw createUnauthorizedError(
+        typeof payload.msg === "string" ? payload.msg : "Unauthorized",
+        payload,
+      );
+    }
+
+    throw new ApiError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Failed to get profile",
+      isRecord(payload) && typeof payload.code === "number"
+        ? payload.code
+        : response.status || 500,
+      isRecord(payload) && "data" in payload ? payload.data : payload,
+    );
+  }
+
+  const userinfo = extractNestedUserinfo<UserProfile>(payload.data);
+  if (!userinfo) {
+    throw new ApiError("Profile data is missing", 500, payload.data);
+  }
+
+  setStoredUserinfo(userinfo);
+  return userinfo;
 }
 
-export async function updateProfile(profile: UserProfile) {
-  return apiRequest<UserProfile>("/profile/update", {
+export async function uploadProfileAvatar(file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(buildUrl("/common/upload"), {
     method: "POST",
-    requiresAuth: true,
-    body: profile,
+    headers: buildAuthenticatedHeaders(),
+    body: formData,
   });
+  const payload = await readResponseBody(response);
+
+  if (response.status === 401) {
+    throw createUnauthorizedError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Unauthorized",
+      payload,
+    );
+  }
+
+  if (!response.ok) {
+    throw createApiError("Failed to upload avatar", response, payload);
+  }
+
+  if (!isRecord(payload) || payload.code !== 1) {
+    if (isRecord(payload) && payload.code === 401) {
+      throw createUnauthorizedError(
+        typeof payload.msg === "string" ? payload.msg : "Unauthorized",
+        payload,
+      );
+    }
+
+    throw new ApiError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Failed to upload avatar",
+      isRecord(payload) && typeof payload.code === "number"
+        ? payload.code
+        : response.status || 500,
+      isRecord(payload) && "data" in payload ? payload.data : payload,
+    );
+  }
+
+  const avatarPath = extractUploadPath(payload.data);
+  if (!avatarPath) {
+    throw new ApiError("Avatar upload did not return a file path", 500, payload.data);
+  }
+
+  return avatarPath;
+}
+
+export async function updateProfile(profile: UpdateProfilePayload) {
+  const cleanPayload: UpdateProfilePayload = { ...profile };
+  const token = getStoredAuthToken();
+
+  if (!cleanPayload.avatar || cleanPayload.avatar.trim() === "") {
+    delete cleanPayload.avatar;
+  }
+
+  const requestUrl = buildUrl("/user/profile");
+
+  logProfileApiDebug("[Profile POST] url:", requestUrl);
+  logProfileApiDebug("[Profile POST] method:", "POST");
+  logProfileApiDebug("[Profile POST] token exists:", Boolean(token));
+  logProfileApiDebug(
+    "[Profile POST] avatar included:",
+    Object.prototype.hasOwnProperty.call(cleanPayload, "avatar"),
+  );
+  logProfileApiDebug("[Profile POST] payload:", cleanPayload);
+
+  const response = await fetch(requestUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      token: token || "",
+    },
+    body: JSON.stringify(cleanPayload),
+  });
+  const payload = await readResponseBody(response);
+
+  logProfileApiDebug("[Profile POST] status:", response.status);
+  logProfileApiDebug("[Profile POST] response:", payload);
+
+  if (response.status === 401) {
+    throw createUnauthorizedError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Unauthorized",
+      payload,
+    );
+  }
+
+  if (!response.ok) {
+    throw createApiError("Failed to update profile", response, payload);
+  }
+
+  if (!isRecord(payload) || payload.code !== 1) {
+    if (isRecord(payload) && payload.code === 401) {
+      throw createUnauthorizedError(
+        typeof payload.msg === "string" ? payload.msg : "Unauthorized",
+        payload,
+      );
+    }
+
+    throw new ApiError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Failed to update profile",
+      isRecord(payload) && typeof payload.code === "number"
+        ? payload.code
+        : response.status || 500,
+      isRecord(payload) && "data" in payload ? payload.data : payload,
+    );
+  }
+
+  const userinfo = extractNestedUserinfo<UserProfile>(payload.data);
+  if (!userinfo) {
+    throw new ApiError("Profile update response is missing user data", 500, payload.data);
+  }
+
+  setStoredUserinfo(userinfo);
+  return userinfo;
 }
 
 export async function getCurrentSubscription() {

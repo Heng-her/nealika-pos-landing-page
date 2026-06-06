@@ -1,13 +1,18 @@
 import React from "react";
 import { Edit2 } from "lucide-react";
 
-interface ProfileFormState {
-  name: string;
+export interface ProfileFormState {
+  username: string;
+  nickname: string;
   email: string;
-  phone: string;
-  business: string;
+  mobile: string;
+  bio: string;
+  businessName: string;
   address: string;
-  avatar: string;
+  avatarUrl: string;
+  avatarPreviewUrl: string;
+  pendingAvatarFile: File | null;
+  hasPendingAvatarChange: boolean;
 }
 
 interface ProfilePageProps {
@@ -18,9 +23,7 @@ interface ProfilePageProps {
   setIsEditingProfile: (val: boolean) => void;
   isLoadingProfile: boolean;
   isSavingProfile: boolean;
-  profileError: string;
-  profileSuccessMessage: string;
-  setProfileSuccessMessage: (val: string) => void;
+  onCancelEdit: () => void;
   onUpdateProfile: (e: React.FormEvent<HTMLFormElement>) => void;
 }
 
@@ -32,9 +35,7 @@ export default function ProfilePage({
   setIsEditingProfile,
   isLoadingProfile,
   isSavingProfile,
-  profileError,
-  profileSuccessMessage,
-  setProfileSuccessMessage,
+  onCancelEdit,
   onUpdateProfile,
 }: ProfilePageProps) {
   return (
@@ -47,7 +48,6 @@ export default function ProfilePage({
           <button
             onClick={() => {
               setIsEditingProfile(true);
-              setProfileSuccessMessage("");
             }}
             className="flex items-center gap-2 px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
           >
@@ -56,18 +56,6 @@ export default function ProfilePage({
           </button>
         )}
       </div>
-
-      {profileError && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700 text-sm">
-          {profileError}
-        </div>
-      )}
-
-      {profileSuccessMessage && (
-        <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-4 text-green-700 text-sm">
-          {profileSuccessMessage}
-        </div>
-      )}
 
       {isLoadingProfile ? (
         <div className="space-y-4 animate-pulse">
@@ -91,9 +79,9 @@ export default function ProfilePage({
         <div className="space-y-4">
           <div className="flex items-center gap-4 mb-6">
             <div className="w-20 h-20 bg-white border border-slate-200 rounded-full flex items-center justify-center overflow-hidden p-1 shadow-inner">
-              {profile.avatar ? (
+              {profile.avatarUrl ? (
                 <img
-                  src={profile.avatar}
+                  src={profile.avatarUrl}
                   alt="Profile"
                   className="w-full h-full object-cover rounded-full"
                 />
@@ -107,32 +95,56 @@ export default function ProfilePage({
             </div>
             <div>
               <h3 className="text-xl font-semibold text-slate-900">
-                {profile.name || "N/A"}
+                {profile.nickname || profile.username || "N/A"}
               </h3>
-              <p className="text-slate-600">{profile.business || "N/A"}</p>
+              <p className="text-slate-600">
+                {profile.username ? `@${profile.username}` : "N/A"}
+              </p>
             </div>
           </div>
 
           <div className="grid md:grid-cols-2 gap-6">
             <div>
+              <label className="text-sm font-medium text-slate-500">
+                Username
+              </label>
+              <p className="text-slate-900 mt-1">{profile.username || "-"}</p>
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-500">
+                Nickname
+              </label>
+              <p className="text-slate-900 mt-1">{profile.nickname || "-"}</p>
+            </div>
+            <div>
               <label className="text-sm font-medium text-slate-500">Email</label>
               <p className="text-slate-900 mt-1">{profile.email || "-"}</p>
             </div>
             <div>
-              <label className="text-sm font-medium text-slate-500">Phone</label>
-              <p className="text-slate-900 mt-1">{profile.phone || "-"}</p>
+              <label className="text-sm font-medium text-slate-500">
+                Mobile
+              </label>
+              <p className="text-slate-900 mt-1">{profile.mobile || "-"}</p>
             </div>
             <div>
               <label className="text-sm font-medium text-slate-500">
                 Business Name
               </label>
-              <p className="text-slate-900 mt-1">{profile.business || "-"}</p>
+              <p className="text-slate-900 mt-1">
+                {profile.businessName || "-"}
+              </p>
             </div>
             <div>
               <label className="text-sm font-medium text-slate-500">
                 Address
               </label>
               <p className="text-slate-900 mt-1">{profile.address || "-"}</p>
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-sm font-medium text-slate-500">Bio</label>
+              <p className="text-slate-900 mt-1 whitespace-pre-wrap">
+                {profile.bio || "-"}
+              </p>
             </div>
           </div>
         </div>
@@ -145,9 +157,9 @@ export default function ProfilePage({
             </label>
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 bg-white border border-slate-200 rounded-full flex items-center justify-center overflow-hidden p-1 shadow-inner">
-                {profile.avatar ? (
+                {profile.avatarPreviewUrl ? (
                   <img
-                    src={profile.avatar}
+                    src={profile.avatarPreviewUrl}
                     alt="Profile Preview"
                     className="w-full h-full object-cover rounded-full"
                   />
@@ -172,7 +184,9 @@ export default function ProfilePage({
                       reader.onloadend = () => {
                         setProfile((prev) => ({
                           ...prev,
-                          avatar: reader.result as string,
+                          avatarPreviewUrl: reader.result as string,
+                          pendingAvatarFile: file,
+                          hasPendingAvatarChange: true,
                         }));
                       };
                       reader.readAsDataURL(file);
@@ -185,18 +199,20 @@ export default function ProfilePage({
                 >
                   Upload Photo
                 </label>
-                {profile.avatar && (
+                {profile.hasPendingAvatarChange && (
                   <button
                     type="button"
                     onClick={() =>
                       setProfile((prev) => ({
                         ...prev,
-                        avatar: "",
+                        avatarPreviewUrl: prev.avatarUrl,
+                        pendingAvatarFile: null,
+                        hasPendingAvatarChange: false,
                       }))
                     }
                     className="text-xs text-red-600 hover:text-red-800 text-left font-medium"
                   >
-                    Remove (Restore Company Logo)
+                    Reset Selected Photo
                   </button>
                 )}
               </div>
@@ -206,14 +222,25 @@ export default function ProfilePage({
           <div className="grid md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">
-                Full Name
+                Username
               </label>
               <input
                 type="text"
-                name="name"
-                defaultValue={profile.name}
+                name="username"
+                defaultValue={profile.username}
                 className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Nickname
+              </label>
+              <input
+                type="text"
+                name="nickname"
+                defaultValue={profile.nickname}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
             <div>
@@ -222,22 +249,31 @@ export default function ProfilePage({
               </label>
               <input
                 type="email"
-                name="email"
-                defaultValue={profile.email}
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
+                value={profile.email}
+                readOnly
+                className="w-full px-4 py-2 border border-slate-200 bg-slate-50 text-slate-500 rounded-lg focus:outline-none"
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">
-                Phone
+                Mobile
               </label>
               <input
                 type="tel"
-                name="phone"
-                defaultValue={profile.phone}
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
+                value={profile.mobile}
+                readOnly
+                className="w-full px-4 py-2 border border-slate-200 bg-slate-50 text-slate-500 rounded-lg focus:outline-none"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Bio
+              </label>
+              <textarea
+                name="bio"
+                defaultValue={profile.bio}
+                rows={4}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
               />
             </div>
             <div>
@@ -246,13 +282,12 @@ export default function ProfilePage({
               </label>
               <input
                 type="text"
-                name="business"
-                defaultValue={profile.business}
+                name="business_name"
+                defaultValue={profile.businessName}
                 className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
               />
             </div>
-            <div className="md:col-span-2">
+            <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">
                 Address
               </label>
@@ -261,7 +296,6 @@ export default function ProfilePage({
                 name="address"
                 defaultValue={profile.address}
                 className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
               />
             </div>
           </div>
@@ -275,10 +309,7 @@ export default function ProfilePage({
             </button>
             <button
               type="button"
-              onClick={() => {
-                setIsEditingProfile(false);
-                setProfileSuccessMessage("");
-              }}
+              onClick={onCancelEdit}
               className="px-6 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors"
             >
               Cancel

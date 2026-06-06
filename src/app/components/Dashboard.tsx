@@ -1,19 +1,33 @@
 import { useEffect, useMemo, useState } from "react";
 import { Key, LogOut, Settings, User, Wallet } from "lucide-react";
+import { toast } from "sonner";
 import logo from "@/imports/logo-nealika.png";
 import CheckoutPage from "./CheckoutPage";
 import PaymentPage from "./PaymentPage";
-import ProfilePage from "./ProfilePage";
+import ProfilePage, { type ProfileFormState } from "./ProfilePage";
 import AccessInfoPage from "./AccessInfoPage";
 import PackagesPage from "./PackagesPage";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import {
   clearStoredAuthToken,
   getCurrentSubscription,
   getErrorMessage,
   getPackages,
   getProfile,
+  isUnauthorizedError,
   logout,
   mapPackageToDisplayPackage,
+  normalizeProfileAvatarUrl,
+  uploadProfileAvatar,
   updateProfile,
   type CurrentSubscription,
   type DisplayPackage,
@@ -21,31 +35,24 @@ import {
 } from "../services/posApi";
 
 interface DashboardProps {
-  onLogout: () => void;
-}
-
-interface ProfileFormState {
-  name: string;
-  email: string;
-  phone: string;
-  business: string;
-  address: string;
-  avatar: string;
+  onLogout: (options?: { redirectToLogin?: boolean }) => void;
 }
 
 function toProfileForm(profile?: UserProfile | null): ProfileFormState {
-  const rawAvatar = profile?.avatar;
-  const avatar =
-    !rawAvatar || rawAvatar.trim() === "" || rawAvatar.trim() === "null"
-      ? ""
-      : rawAvatar;
+  const avatarUrl = normalizeProfileAvatarUrl(profile?.avatar);
+
   return {
-    name: profile?.name || "",
+    username: profile?.username || profile?.name || "",
+    nickname: profile?.nickname || "",
     email: profile?.email || "",
-    phone: profile?.phone || "",
-    business: profile?.business_name || "",
+    mobile: profile?.mobile || profile?.phone || "",
+    bio: profile?.bio || "",
+    businessName: profile?.business_name || "",
     address: profile?.address || "",
-    avatar,
+    avatarUrl,
+    avatarPreviewUrl: avatarUrl,
+    pendingAvatarFile: null,
+    hasPendingAvatarChange: false,
   };
 }
 
@@ -91,16 +98,20 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   const [currentSubscription, setCurrentSubscription] =
     useState<CurrentSubscription | null>(null);
   const [profile, setProfile] = useState<ProfileFormState>(toProfileForm(null));
+  const [savedProfile, setSavedProfile] = useState<ProfileFormState>(
+    toProfileForm(null),
+  );
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState("");
-  const [profileSuccessMessage, setProfileSuccessMessage] = useState("");
   const [packagesError, setPackagesError] = useState("");
   const [subscriptionError, setSubscriptionError] = useState("");
   const [isLoadingPackages, setIsLoadingPackages] = useState(true);
   const [isLoadingSubscription, setIsLoadingSubscription] = useState(true);
   const [paymentsRefreshKey, setPaymentsRefreshKey] = useState(0);
+  const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const subscribedPackageId = currentSubscription?.package_id || null;
 
@@ -114,6 +125,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       email: profile.email || "Not available",
     };
   }, [currentSubscription, profile.email]);
+
+  const syncProfileState = (latestProfile?: UserProfile | null) => {
+    const nextProfile = toProfileForm(latestProfile);
+    setProfile(nextProfile);
+    setSavedProfile(nextProfile);
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -137,18 +154,31 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         return;
       }
 
+      const unauthorizedResult = [profileResult, subscriptionResult].find(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected" && isUnauthorizedError(result.reason),
+      );
+
+      if (unauthorizedResult) {
+        toast.error(getErrorMessage(unauthorizedResult.reason));
+        onLogout({ redirectToLogin: true });
+        return;
+      }
+
       if (packagesResult.status === "fulfilled") {
         setServices(packagesResult.value.map(mapPackageToDisplayPackage));
       } else {
         const message = getErrorMessage(packagesResult.reason);
         setPackagesError(message);
+        toast.error(message);
       }
 
       if (profileResult.status === "fulfilled") {
-        setProfile(toProfileForm(profileResult.value));
+        syncProfileState(profileResult.value);
       } else {
         const message = getErrorMessage(profileResult.reason);
         setProfileError(message);
+        toast.error(message);
       }
 
       if (subscriptionResult.status === "fulfilled") {
@@ -156,6 +186,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       } else {
         const message = getErrorMessage(subscriptionResult.reason);
         setSubscriptionError(message);
+        toast.error(message);
       }
 
       setIsLoadingPackages(false);
@@ -163,12 +194,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       setIsLoadingProfile(false);
     };
 
-    loadDashboardData();
+    void loadDashboardData();
 
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [onLogout]);
 
   const handleSubscribe = (packageId: number) => {
     const selectedPackage = services.find(
@@ -207,13 +238,20 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       ]);
 
       setServices(packages.map(mapPackageToDisplayPackage));
-      setProfile(toProfileForm(latestProfile));
+      syncProfileState(latestProfile);
       setCurrentSubscription(subscription);
     } catch (error) {
+      if (isUnauthorizedError(error)) {
+        toast.error(getErrorMessage(error));
+        onLogout({ redirectToLogin: true });
+        return;
+      }
+
       const message = getErrorMessage(error);
       setPackagesError(message);
       setSubscriptionError(message);
       setProfileError(message);
+      toast.error(message);
     }
   };
 
@@ -233,39 +271,67 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
     setIsSavingProfile(true);
     setProfileError("");
-    setProfileSuccessMessage("");
 
     try {
+      let avatarPath: string | undefined;
+
+      if (profile.pendingAvatarFile) {
+        avatarPath = await uploadProfileAvatar(profile.pendingAvatarFile);
+      }
+
       const updatedProfile = await updateProfile({
-        name: String(formData.get("name") || ""),
-        email: String(formData.get("email") || ""),
-        phone: String(formData.get("phone") || ""),
-        business_name: String(formData.get("business") || ""),
-        address: String(formData.get("address") || ""),
-        avatar: profile.avatar || null,
+        username: String(formData.get("username") || "").trim(),
+        nickname: String(formData.get("nickname") || "").trim(),
+        bio: String(formData.get("bio") || "").trim(),
+        business_name: String(formData.get("business_name") || "").trim(),
+        address: String(formData.get("address") || "").trim(),
+        ...(avatarPath ? { avatar: avatarPath } : {}),
       });
 
-      setProfile(toProfileForm(updatedProfile));
-      setProfileSuccessMessage("Profile updated successfully.");
+      syncProfileState(updatedProfile);
+      try {
+        const confirmedProfile = await getProfile();
+        syncProfileState(confirmedProfile);
+      } catch (refreshError) {
+        if (isUnauthorizedError(refreshError)) {
+          toast.error(getErrorMessage(refreshError));
+          onLogout({ redirectToLogin: true });
+          return;
+        }
+
+        const message = getErrorMessage(refreshError);
+        setProfileError(message);
+        toast.error(message);
+      }
+      toast.success("Profile updated successfully.");
       setIsEditingProfile(false);
     } catch (error) {
-      setProfileError(getErrorMessage(error));
+      if (isUnauthorizedError(error)) {
+        toast.error(getErrorMessage(error));
+        onLogout({ redirectToLogin: true });
+        return;
+      }
+
+      const message = getErrorMessage(error);
+      setProfileError(message);
+      toast.error(message);
     } finally {
       setIsSavingProfile(false);
     }
   };
 
   const handleDashboardLogout = async () => {
-    const confirmLogout = window.confirm("Are you sure you want to logout?");
-    if (!confirmLogout) {
-      return;
-    }
-
+    setIsLoggingOut(true);
     try {
       await logout();
+      setIsLogoutDialogOpen(false);
+      toast.success("Logged out successfully.");
     } catch (error) {
       console.error("Logout request failed:", error);
+      toast.error(getErrorMessage(error));
       clearStoredAuthToken();
+    } finally {
+      setIsLoggingOut(false);
     }
     onLogout();
   };
@@ -291,7 +357,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               <img src={logo} alt="Nealika" className="h-10" />
             </div>
             <button
-              onClick={handleDashboardLogout}
+              onClick={() => setIsLogoutDialogOpen(true)}
               className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
             >
               <LogOut className="w-5 h-5" />
@@ -364,9 +430,10 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                 setIsEditingProfile={setIsEditingProfile}
                 isLoadingProfile={isLoadingProfile}
                 isSavingProfile={isSavingProfile}
-                profileError={profileError}
-                profileSuccessMessage={profileSuccessMessage}
-                setProfileSuccessMessage={setProfileSuccessMessage}
+                onCancelEdit={() => {
+                  setProfile(savedProfile);
+                  setIsEditingProfile(false);
+                }}
                 onUpdateProfile={handleUpdateProfile}
               />
             )}
@@ -398,6 +465,34 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           </div>
         </div>
       </div>
+
+      <AlertDialog
+        open={isLogoutDialogOpen}
+        onOpenChange={(open) => {
+          if (!isLoggingOut) {
+            setIsLogoutDialogOpen(open);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Logout</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to logout?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isLoggingOut}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDashboardLogout}
+              disabled={isLoggingOut}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isLoggingOut ? "Logging out..." : "Yes, logout"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
     </div>
   );
