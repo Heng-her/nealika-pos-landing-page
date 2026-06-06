@@ -59,11 +59,11 @@ export default function ProfilePage({
         )}
       </div>
 
-      {profileError && (
+      {/* {profileError && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700 text-sm">
           {profileError}
         </div>
-      )}
+      )} */}
 
       {isLoadingProfile ? (
         <div className="space-y-4 animate-pulse">

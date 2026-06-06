@@ -290,7 +290,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         return;
       }
 
-      setProfileError(getErrorMessage(error));
+      const errorMessage = getErrorMessage(error);
+      setProfileError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setIsSavingProfile(false);
     }
