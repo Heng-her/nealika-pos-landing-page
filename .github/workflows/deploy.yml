@@ -1,0 +1,39 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - prod
+
+env:
+  IMAGE_NAME: ghcr.io/nealika/pos_landing_page
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_TOKEN }}
+
+      - name: Build and push image
+        run: |
+          docker build -t $IMAGE_NAME:latest .
+          docker push $IMAGE_NAME:latest
+
+      - name: Trigger Redeploy
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request GET "${{ secrets.WEBHOOK_URL }}" \
+            --header "Authorization: Bearer ${{ secrets.WEBHOOK_TOKEN }}"
