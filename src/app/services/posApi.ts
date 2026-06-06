@@ -1,4 +1,4 @@
-const DEFAULT_API_BASE_URL = "https://mgr-pos.kemleap.site";
+const DEFAULT_API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL).trim();
 const AUTH_TOKEN_KEY = "nealika_pos_token";
 
 type RequestMethod = "GET" | "POST" | "PUT" | "DELETE";
@@ -198,10 +198,7 @@ const REGISTER_LIMITS: Record<string, string> = {
 };
 
 function getApiBaseUrl() {
-  return (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL).replace(
-    /\/+$/,
-    "",
-  );
+  return DEFAULT_API_BASE_URL.replace(/\/+$/, "");
 }
 
 function buildUrl(
@@ -221,6 +218,131 @@ function buildUrl(
   return url.toString();
 }
 
+const VITE_API_URL = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
+
+// Commented out as react-i18next is not installed in package.json to prevent build errors
+// import { useTranslation } from "react-i18next";
+
+export default async function post({
+    endpoint,
+    data,
+    params,
+    method = "POST",
+}: {
+    endpoint: string;
+    data?: any | null;
+    params?: Record<string, any>;
+    method?: string;
+}) {
+    // Check if the URL is valid
+    if (!endpoint || typeof endpoint !== "string") {
+        throw new Error("Invalid URL");
+    }
+
+    const lang = localStorage.getItem("lang") || "en";
+    params = {
+        ...params,
+        "lang": lang,
+    }
+
+    if (!data && !params) {
+        return get({endpoint, method});
+    }
+
+    if (!data && params) {
+        return get({endpoint, params, method});
+    }
+
+    // Check if the data is valid
+    if (data !== null && typeof data !== "object") {
+        throw new Error("Invalid data");
+    }
+
+    if (params && typeof params !== "object") {
+        throw new Error("Invalid params");
+    }
+    const urlParams = new URLSearchParams(params).toString();
+    endpoint = urlParams ? `${endpoint}?${urlParams}` : endpoint;
+
+    const token = getStoredAuthToken();
+    const headers: Record<string, string> = {
+        "Content-Type": "application/x-www-form-urlencoded",
+    };
+    if (token) {
+        headers["token"] = token;
+    }
+
+    try {
+        const bodyContent = data instanceof FormData 
+            ? data 
+            : new URLSearchParams(data as Record<string, string>).toString();
+
+        const fetchHeaders = data instanceof FormData 
+            ? { ...headers } 
+            : headers;
+            
+        if (data instanceof FormData) {
+            delete (fetchHeaders as any)["Content-Type"];
+        }
+
+        return fetch(`${VITE_API_URL}${endpoint}`, {
+            method,
+            headers: fetchHeaders,
+            body: bodyContent,
+        }).then((res) => {
+            if (!res.ok) {
+                throw new Error(`HTTP error! status: ${res.status}`);
+            }
+            return res.json();
+        });
+    } catch (error) {
+        console.error("There was a problem with the fetch operation:", error);
+        return error;
+    }
+}
+
+export async function get({
+    endpoint,
+    params,
+    method = "POST",
+}: {
+    endpoint: string;
+    params?: Record<string, any>;
+    method?: string;
+}) {
+    if (!endpoint || typeof endpoint !== "string") {
+        throw new Error("Invalid URL");
+    }
+    if (params && typeof params !== "object") {
+        throw new Error("Invalid params");
+    }
+    const urlParams = new URLSearchParams(params).toString();
+    endpoint = urlParams ? `${endpoint}?${urlParams}` : endpoint;
+
+    const token = getStoredAuthToken();
+    const headers: Record<string, string> = {
+        "Content-Type": "application/x-www-form-urlencoded",
+    };
+    if (token) {
+        headers["token"] = token;
+    }
+
+    try {
+        return fetch(`${VITE_API_URL}${endpoint}`, {
+            method,
+            headers,
+        }).then((res) => {
+            if (!res.ok) {
+                throw new Error(`HTTP error! status: ${res.status}`);
+            }
+            return res.json();
+        });
+    } catch (error) {
+        console.error("There was a problem with the fetch operation:", error);
+        return error;
+    }
+}
+
 async function apiRequest<T>(
   path: string,
   {
@@ -230,60 +352,36 @@ async function apiRequest<T>(
     headers = {},
     query,
   }: RequestOptions = {},
-) {
-  const requestHeaders = new Headers(headers);
-  const token = getStoredAuthToken();
+): Promise<T> {
+  const params = query || {};
+  let res: any;
 
-  if (requiresAuth) {
-    if (!token) {
-      throw new ApiError("Please login first", 401);
+  if (method === "GET") {
+    res = await get({ endpoint: path, params, method: "GET" });
+  } else {
+    res = await post({ endpoint: path, data: body, params, method });
+  }
+
+  if (res && typeof res === "object") {
+    if ("code" in res) {
+      const apiPayload = res as ApiEnvelope<T>;
+      if (apiPayload.code === 1) {
+        return apiPayload.data;
+      }
+
+      if (apiPayload.code === 401) {
+        clearStoredAuthToken();
+      }
+
+      throw new ApiError(
+        apiPayload.msg || "Request failed",
+        apiPayload.code,
+        apiPayload.data,
+      );
     }
-    requestHeaders.set("token", token);
   }
 
-  let requestBody: BodyInit | undefined;
-  if (body instanceof FormData) {
-    requestBody = body;
-  } else if (body !== undefined) {
-    requestHeaders.set("Content-Type", "application/json");
-    requestBody = JSON.stringify(body);
-  }
-
-  const response = await fetch(buildUrl(path, query), {
-    method,
-    headers: requestHeaders,
-    body: requestBody,
-  });
-
-  const rawText = await response.text();
-  const payload = rawText ? tryParseJson(rawText) : null;
-
-  if (payload && typeof payload === "object" && "code" in payload) {
-    const apiPayload = payload as ApiEnvelope<T>;
-    if (apiPayload.code === 1) {
-      return apiPayload.data;
-    }
-
-    if (apiPayload.code === 401) {
-      clearStoredAuthToken();
-    }
-
-    throw new ApiError(
-      apiPayload.msg || "Request failed",
-      apiPayload.code,
-      apiPayload.data,
-    );
-  }
-
-  if (!response.ok) {
-    throw new ApiError(
-      response.statusText || "Request failed",
-      response.status,
-      payload,
-    );
-  }
-
-  return payload as T;
+  return res as T;
 }
 
 function tryParseJson(rawText: string) {
@@ -438,17 +536,6 @@ export async function sendOtp(phone: string) {
     body: { phone },
   });
 }
-export async function logout() {
-  try {
-    const data = await apiRequest<unknown>("/auth/logout", {
-      method: "POST",
-      requiresAuth: true,
-    });
-    return data;
-  } finally {
-    clearStoredAuthToken();
-  }
-}
 
 export async function verifyOtp(phone: string, otp: string) {
   const data = await apiRequest<VerifyOtpResponse>("/auth/verifyotp", {
@@ -489,6 +576,18 @@ export async function loginWithTelegram(payload: TelegramAuthPayload) {
   return data;
 }
 
+export async function logout() {
+  try {
+    const data = await apiRequest<unknown>("/auth/logout", {
+      method: "POST",
+      requiresAuth: true,
+    });
+    return data;
+  } finally {
+    clearStoredAuthToken();
+  }
+}
+
 export async function getMe() {
   if (!getStoredAuthToken()) {
     return null;
@@ -514,8 +613,8 @@ export async function getProfile() {
 }
 
 export async function updateProfile(profile: UserProfile) {
-  return apiRequest<UserProfile>("/profile", {
-    method: "PUT",
+  return apiRequest<UserProfile>("/profile/update", {
+    method: "POST",
     requiresAuth: true,
     body: profile,
   });
@@ -551,8 +650,15 @@ export async function createPaywayPayment(payload: {
   });
 }
 
+export interface PaymentHistoryResponse {
+  total: number;
+  page: number;
+  limit: number;
+  rows: PaymentHistoryItem[];
+}
+
 export async function getPaymentHistory() {
-  return apiRequest<PaymentHistoryItem[]>("/payments/history", {
+  return apiRequest<PaymentHistoryResponse>("/payments/history", {
     requiresAuth: true,
   });
 }

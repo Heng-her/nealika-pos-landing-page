@@ -22,6 +22,60 @@ interface TransactionRow {
   paymentMethod: string;
 }
 
+function formatDateTime(timestamp: number) {
+  const date = new Date(timestamp * 1000);
+  const year = date.getFullYear();
+  const shortYear = String(year).slice(-2);
+  const monthNames = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+  ];
+  const monthName = monthNames[date.getMonth()];
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${day} ${monthName} ${shortYear} @ ${hours}:${minutes}`;
+}
+
+function formatDateValue(
+  value?: string | number | null,
+  fallbackTimestamp?: number | null,
+) {
+  if (!value) {
+    return fallbackTimestamp ? formatDateTime(fallbackTimestamp) : "-";
+  }
+  if (typeof value === "number") {
+    return formatDateTime(value);
+  }
+  if (/^\d+$/.test(value)) {
+    return formatDateTime(Number(value));
+  }
+  
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) {
+    return formatDateTime(Math.floor(date.getTime() / 1000));
+  }
+  
+  return value;
+}
+
+function getServiceTypeText(type?: string | number) {
+  if (type === 6 || String(type) === "6") {
+    return "Monthly Subscription";
+  }
+  return String(type || "Subscription");
+}
+
 function mapTransaction(
   transaction: PaymentHistoryItem,
   index: number,
@@ -36,9 +90,12 @@ function mapTransaction(
 
   return {
     id: transaction.id || transaction.transaction_id || index + 1,
-    date: transaction.paid_at || transaction.created_at || "-",
+    date: formatDateValue(
+      transaction.paid_at || transaction.created_at,
+      transaction.createtime as number,
+    ),
     customer: transaction.package_name || "Package",
-    service: transaction.type || "Subscription",
+    service: getServiceTypeText(transaction.type),
     amount: Number(transaction.amount || 0),
     currency: transaction.currency || "USD",
     status: mappedStatus,
@@ -71,12 +128,13 @@ export default function PaymentPage({ refreshKey = 0 }: PaymentPageProps) {
       setErrorMessage("");
 
       try {
-        const history = await getPaymentHistory();
+        const response = await getPaymentHistory();
         if (!isMounted) {
           return;
         }
 
-        setTransactions(history.map(mapTransaction));
+        const rows = response?.rows || [];
+        setTransactions(rows.map(mapTransaction));
       } catch (error) {
         if (!isMounted) {
           return;
@@ -132,7 +190,11 @@ export default function PaymentPage({ refreshKey = 0 }: PaymentPageProps) {
               value={filterStatus}
               onChange={(event) =>
                 setFilterStatus(
-                  event.target.value as "all" | "completed" | "pending" | "failed",
+                  event.target.value as
+                    | "all"
+                    | "completed"
+                    | "pending"
+                    | "failed",
                 )
               }
               className="px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -167,7 +229,7 @@ export default function PaymentPage({ refreshKey = 0 }: PaymentPageProps) {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-slate-200">
-                  <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">
+                  <th className="text-left py-3 text-sm font-semibold text-slate-700 whitespace-nowrap">
                     Date & Time
                   </th>
                   <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">
@@ -193,10 +255,27 @@ export default function PaymentPage({ refreshKey = 0 }: PaymentPageProps) {
                     key={transaction.id}
                     className="border-b border-slate-100 hover:bg-slate-50"
                   >
-                    <td className="py-3 px-4 text-sm text-slate-600">
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4" />
-                        {transaction.date}
+                    <td className="py-3 text-sm text-slate-600">
+                      <div className="flex items-start gap-2">
+                        <Clock className="w-4 h-4 mt-0.5 flex-shrink-0" />
+
+                        <div className="flex flex-col sm:flex-row sm:items-baseline sm:gap-2">
+                          {(() => {
+                            const dateParts = transaction.date.includes("@")
+                              ? transaction.date.split("@")
+                              : transaction.date.split(" ");
+                            return (
+                              <>
+                                <div className="whitespace-nowrap">
+                                  {dateParts[0]?.trim()}
+                                </div>
+                                <div className="text-xs text-slate-500 whitespace-nowrap">
+                                  {dateParts[1]?.trim() || ""}
+                                </div>
+                              </>
+                            );
+                          })()}
+                        </div>
                       </div>
                     </td>
                     <td className="py-3 px-4 text-sm text-slate-900 font-medium">
@@ -208,7 +287,7 @@ export default function PaymentPage({ refreshKey = 0 }: PaymentPageProps) {
                     <td className="py-3 px-4 text-sm font-semibold text-slate-900">
                       {formatAmount(transaction.amount, transaction.currency)}
                     </td>
-                    <td className="py-3 px-4 text-sm text-slate-600">
+                    <td className="py-3 px-4 text-sm text-slate-600 uppercase">
                       {transaction.paymentMethod}
                     </td>
                     <td className="py-3 px-4">

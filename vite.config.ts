@@ -30,6 +30,12 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    // Enable CORS for development server
+    cors: true,
+    host: true,
+    allowedHosts: true,
+  },
 
 
   server: {
