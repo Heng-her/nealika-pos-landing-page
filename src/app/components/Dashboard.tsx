@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Key, LogOut, Settings, User, Wallet } from "lucide-react";
+import { toast } from "sonner";
 import logo from "@/imports/logo-nealika.png";
 import CheckoutPage from "./CheckoutPage";
 import PaymentPage from "./PaymentPage";
-import ProfilePage from "./ProfilePage";
+import ProfilePage, { type ProfileFormState } from "./ProfilePage";
 import AccessInfoPage from "./AccessInfoPage";
 import PackagesPage from "./PackagesPage";
 import {
@@ -12,8 +13,11 @@ import {
   getErrorMessage,
   getPackages,
   getProfile,
+  isUnauthorizedError,
   logout,
   mapPackageToDisplayPackage,
+  normalizeProfileAvatarUrl,
+  uploadProfileAvatar,
   updateProfile,
   type CurrentSubscription,
   type DisplayPackage,
@@ -21,31 +25,24 @@ import {
 } from "../services/posApi";
 
 interface DashboardProps {
-  onLogout: () => void;
-}
-
-interface ProfileFormState {
-  name: string;
-  email: string;
-  phone: string;
-  business: string;
-  address: string;
-  avatar: string;
+  onLogout: (options?: { redirectToLogin?: boolean }) => void;
 }
 
 function toProfileForm(profile?: UserProfile | null): ProfileFormState {
-  const rawAvatar = profile?.avatar;
-  const avatar =
-    !rawAvatar || rawAvatar.trim() === "" || rawAvatar.trim() === "null"
-      ? ""
-      : rawAvatar;
+  const avatarUrl = normalizeProfileAvatarUrl(profile?.avatar);
+
   return {
-    name: profile?.name || "",
+    username: profile?.username || profile?.name || "",
+    nickname: profile?.nickname || "",
     email: profile?.email || "",
-    phone: profile?.phone || "",
-    business: profile?.business_name || "",
+    mobile: profile?.mobile || profile?.phone || "",
+    bio: profile?.bio || "",
+    businessName: profile?.business_name || "",
     address: profile?.address || "",
-    avatar,
+    avatarUrl,
+    avatarPreviewUrl: avatarUrl,
+    pendingAvatarFile: null,
+    hasPendingAvatarChange: false,
   };
 }
 
@@ -91,11 +88,13 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   const [currentSubscription, setCurrentSubscription] =
     useState<CurrentSubscription | null>(null);
   const [profile, setProfile] = useState<ProfileFormState>(toProfileForm(null));
+  const [savedProfile, setSavedProfile] = useState<ProfileFormState>(
+    toProfileForm(null),
+  );
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState("");
-  const [profileSuccessMessage, setProfileSuccessMessage] = useState("");
   const [packagesError, setPackagesError] = useState("");
   const [subscriptionError, setSubscriptionError] = useState("");
   const [isLoadingPackages, setIsLoadingPackages] = useState(true);
@@ -114,6 +113,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       email: profile.email || "Not available",
     };
   }, [currentSubscription, profile.email]);
+
+  const syncProfileState = (latestProfile?: UserProfile | null) => {
+    const nextProfile = toProfileForm(latestProfile);
+    setProfile(nextProfile);
+    setSavedProfile(nextProfile);
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -137,6 +142,16 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         return;
       }
 
+      const unauthorizedResult = [profileResult, subscriptionResult].find(
+        (result) =>
+          result.status === "rejected" && isUnauthorizedError(result.reason),
+      );
+
+      if (unauthorizedResult) {
+        onLogout({ redirectToLogin: true });
+        return;
+      }
+
       if (packagesResult.status === "fulfilled") {
         setServices(packagesResult.value.map(mapPackageToDisplayPackage));
       } else {
@@ -145,7 +160,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       }
 
       if (profileResult.status === "fulfilled") {
-        setProfile(toProfileForm(profileResult.value));
+        syncProfileState(profileResult.value);
       } else {
         const message = getErrorMessage(profileResult.reason);
         setProfileError(message);
@@ -163,12 +178,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       setIsLoadingProfile(false);
     };
 
-    loadDashboardData();
+    void loadDashboardData();
 
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [onLogout]);
 
   const handleSubscribe = (packageId: number) => {
     const selectedPackage = services.find(
@@ -207,9 +222,14 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       ]);
 
       setServices(packages.map(mapPackageToDisplayPackage));
-      setProfile(toProfileForm(latestProfile));
+      syncProfileState(latestProfile);
       setCurrentSubscription(subscription);
     } catch (error) {
+      if (isUnauthorizedError(error)) {
+        onLogout({ redirectToLogin: true });
+        return;
+      }
+
       const message = getErrorMessage(error);
       setPackagesError(message);
       setSubscriptionError(message);
@@ -233,22 +253,43 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
     setIsSavingProfile(true);
     setProfileError("");
-    setProfileSuccessMessage("");
 
     try {
+      let avatarPath: string | undefined;
+
+      if (profile.pendingAvatarFile) {
+        avatarPath = await uploadProfileAvatar(profile.pendingAvatarFile);
+      }
+
       const updatedProfile = await updateProfile({
-        name: String(formData.get("name") || ""),
-        email: String(formData.get("email") || ""),
-        phone: String(formData.get("phone") || ""),
-        business_name: String(formData.get("business") || ""),
-        address: String(formData.get("address") || ""),
-        avatar: profile.avatar || null,
+        username: String(formData.get("username") || "").trim(),
+        nickname: String(formData.get("nickname") || "").trim(),
+        bio: String(formData.get("bio") || "").trim(),
+        business_name: String(formData.get("business_name") || "").trim(),
+        address: String(formData.get("address") || "").trim(),
+        ...(avatarPath ? { avatar: avatarPath } : {}),
       });
 
-      setProfile(toProfileForm(updatedProfile));
-      setProfileSuccessMessage("Profile updated successfully.");
+      syncProfileState(updatedProfile);
+      try {
+        const confirmedProfile = await getProfile();
+        syncProfileState(confirmedProfile);
+      } catch (refreshError) {
+        if (isUnauthorizedError(refreshError)) {
+          onLogout({ redirectToLogin: true });
+          return;
+        }
+
+        setProfileError(getErrorMessage(refreshError));
+      }
+      toast.success("Profile updated successfully.");
       setIsEditingProfile(false);
     } catch (error) {
+      if (isUnauthorizedError(error)) {
+        onLogout({ redirectToLogin: true });
+        return;
+      }
+
       setProfileError(getErrorMessage(error));
     } finally {
       setIsSavingProfile(false);
@@ -365,8 +406,10 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                 isLoadingProfile={isLoadingProfile}
                 isSavingProfile={isSavingProfile}
                 profileError={profileError}
-                profileSuccessMessage={profileSuccessMessage}
-                setProfileSuccessMessage={setProfileSuccessMessage}
+                onCancelEdit={() => {
+                  setProfile(savedProfile);
+                  setIsEditingProfile(false);
+                }}
                 onUpdateProfile={handleUpdateProfile}
               />
             )}
