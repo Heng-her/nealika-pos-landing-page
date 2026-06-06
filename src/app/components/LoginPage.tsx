@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ArrowLeft, Send } from "lucide-react";
+import { toast } from "sonner";
 import logo from "@/imports/logo-nealika.png";
 import SocialAuthButtons from "./SocialAuthButtons";
 import {
@@ -23,20 +24,17 @@ export default function LoginPage({
   const [showOtpInput, setShowOtpInput] = useState(false);
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
-  const [authError, setAuthError] = useState("");
-  const [socialError, setSocialError] = useState("");
 
   const handleSendOtp = async (event: React.FormEvent) => {
     event.preventDefault();
-    setAuthError("");
-    setSocialError("");
     setIsSendingOtp(true);
 
     try {
       await sendOtp(normalizePhoneNumber(phoneNumber));
       setShowOtpInput(true);
+      toast.success("OTP sent successfully.");
     } catch (error) {
-      setAuthError(getErrorMessage(error));
+      toast.error(getErrorMessage(error));
     } finally {
       setIsSendingOtp(false);
     }
@@ -44,33 +42,27 @@ export default function LoginPage({
 
   const handleVerifyOtp = async (event: React.FormEvent) => {
     event.preventDefault();
-    setAuthError("");
-    setSocialError("");
     setIsVerifyingOtp(true);
 
     try {
       await verifyOtp(normalizePhoneNumber(phoneNumber), otp);
+      toast.success("Logged in successfully.");
       onLoginSuccess();
     } catch (error) {
-      setAuthError(getErrorMessage(error));
+      toast.error(getErrorMessage(error));
     } finally {
       setIsVerifyingOtp(false);
     }
   };
 
-  const handleSocialAuthStart = () => {
-    setSocialError("");
-    setAuthError("");
-  };
+  const handleSocialAuthStart = () => {};
 
   const handleSocialAuthError = (message: string) => {
-    setSocialError(message);
-    setAuthError("");
+    toast.error(message);
   };
 
   const handleSocialAuthSuccess = async () => {
-    setSocialError("");
-    setAuthError("");
+    toast.success("Logged in successfully.");
     onLoginSuccess();
   };
 
@@ -171,7 +163,6 @@ export default function LoginPage({
                   onClick={() => {
                     setShowOtpInput(false);
                     setOtp("");
-                    setAuthError("");
                   }}
                   className="w-full px-4 py-2 text-blue-600 hover:text-blue-700 font-medium transition-colors"
                 >
@@ -179,10 +170,6 @@ export default function LoginPage({
                 </button>
               </form>
             )}
-
-            {authError ? (
-              <p className="text-sm text-red-600 mt-3">{authError}</p>
-            ) : null}
           </div>
 
           <div className="relative my-6">
@@ -202,10 +189,6 @@ export default function LoginPage({
             onError={handleSocialAuthError}
             onStart={handleSocialAuthStart}
           />
-
-          {socialError ? (
-            <p className="text-sm text-amber-700 mt-4">{socialError}</p>
-          ) : null}
 
           <p className="text-xs text-slate-500 text-center mt-6">
             By continuing, you agree to our{" "}

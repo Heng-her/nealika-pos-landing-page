@@ -8,6 +8,16 @@ import ProfilePage, { type ProfileFormState } from "./ProfilePage";
 import AccessInfoPage from "./AccessInfoPage";
 import PackagesPage from "./PackagesPage";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
+import {
   clearStoredAuthToken,
   getCurrentSubscription,
   getErrorMessage,
@@ -100,6 +110,8 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   const [isLoadingPackages, setIsLoadingPackages] = useState(true);
   const [isLoadingSubscription, setIsLoadingSubscription] = useState(true);
   const [paymentsRefreshKey, setPaymentsRefreshKey] = useState(0);
+  const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const subscribedPackageId = currentSubscription?.package_id || null;
 
@@ -143,11 +155,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       }
 
       const unauthorizedResult = [profileResult, subscriptionResult].find(
-        (result) =>
+        (result): result is PromiseRejectedResult =>
           result.status === "rejected" && isUnauthorizedError(result.reason),
       );
 
       if (unauthorizedResult) {
+        toast.error(getErrorMessage(unauthorizedResult.reason));
         onLogout({ redirectToLogin: true });
         return;
       }
@@ -157,6 +170,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       } else {
         const message = getErrorMessage(packagesResult.reason);
         setPackagesError(message);
+        toast.error(message);
       }
 
       if (profileResult.status === "fulfilled") {
@@ -164,6 +178,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       } else {
         const message = getErrorMessage(profileResult.reason);
         setProfileError(message);
+        toast.error(message);
       }
 
       if (subscriptionResult.status === "fulfilled") {
@@ -171,6 +186,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       } else {
         const message = getErrorMessage(subscriptionResult.reason);
         setSubscriptionError(message);
+        toast.error(message);
       }
 
       setIsLoadingPackages(false);
@@ -226,6 +242,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       setCurrentSubscription(subscription);
     } catch (error) {
       if (isUnauthorizedError(error)) {
+        toast.error(getErrorMessage(error));
         onLogout({ redirectToLogin: true });
         return;
       }
@@ -234,6 +251,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       setPackagesError(message);
       setSubscriptionError(message);
       setProfileError(message);
+      toast.error(message);
     }
   };
 
@@ -276,37 +294,44 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         syncProfileState(confirmedProfile);
       } catch (refreshError) {
         if (isUnauthorizedError(refreshError)) {
+          toast.error(getErrorMessage(refreshError));
           onLogout({ redirectToLogin: true });
           return;
         }
 
-        setProfileError(getErrorMessage(refreshError));
+        const message = getErrorMessage(refreshError);
+        setProfileError(message);
+        toast.error(message);
       }
       toast.success("Profile updated successfully.");
       setIsEditingProfile(false);
     } catch (error) {
       if (isUnauthorizedError(error)) {
+        toast.error(getErrorMessage(error));
         onLogout({ redirectToLogin: true });
         return;
       }
 
-      setProfileError(getErrorMessage(error));
+      const message = getErrorMessage(error);
+      setProfileError(message);
+      toast.error(message);
     } finally {
       setIsSavingProfile(false);
     }
   };
 
   const handleDashboardLogout = async () => {
-    const confirmLogout = window.confirm("Are you sure you want to logout?");
-    if (!confirmLogout) {
-      return;
-    }
-
+    setIsLoggingOut(true);
     try {
       await logout();
+      setIsLogoutDialogOpen(false);
+      toast.success("Logged out successfully.");
     } catch (error) {
       console.error("Logout request failed:", error);
+      toast.error(getErrorMessage(error));
       clearStoredAuthToken();
+    } finally {
+      setIsLoggingOut(false);
     }
     onLogout();
   };
@@ -332,7 +357,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               <img src={logo} alt="Nealika" className="h-10" />
             </div>
             <button
-              onClick={handleDashboardLogout}
+              onClick={() => setIsLogoutDialogOpen(true)}
               className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
             >
               <LogOut className="w-5 h-5" />
@@ -405,7 +430,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                 setIsEditingProfile={setIsEditingProfile}
                 isLoadingProfile={isLoadingProfile}
                 isSavingProfile={isSavingProfile}
-                profileError={profileError}
                 onCancelEdit={() => {
                   setProfile(savedProfile);
                   setIsEditingProfile(false);
@@ -441,6 +465,34 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           </div>
         </div>
       </div>
+
+      <AlertDialog
+        open={isLogoutDialogOpen}
+        onOpenChange={(open) => {
+          if (!isLoggingOut) {
+            setIsLogoutDialogOpen(open);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Logout</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to logout?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isLoggingOut}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDashboardLogout}
+              disabled={isLoggingOut}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isLoggingOut ? "Logging out..." : "Yes, logout"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
     </div>
   );

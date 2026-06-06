@@ -23,7 +23,6 @@ interface ProfilePageProps {
   setIsEditingProfile: (val: boolean) => void;
   isLoadingProfile: boolean;
   isSavingProfile: boolean;
-  profileError: string;
   onCancelEdit: () => void;
   onUpdateProfile: (e: React.FormEvent<HTMLFormElement>) => void;
 }
@@ -36,7 +35,6 @@ export default function ProfilePage({
   setIsEditingProfile,
   isLoadingProfile,
   isSavingProfile,
-  profileError,
   onCancelEdit,
   onUpdateProfile,
 }: ProfilePageProps) {
@@ -58,12 +56,6 @@ export default function ProfilePage({
           </button>
         )}
       </div>
-
-      {profileError && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700 text-sm">
-          {profileError}
-        </div>
-      )}
 
       {isLoadingProfile ? (
         <div className="space-y-4 animate-pulse">
