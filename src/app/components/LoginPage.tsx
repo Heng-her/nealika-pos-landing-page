@@ -1,8 +1,18 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, Send } from "lucide-react";
 import { toast } from "sonner";
 import logo from "@/imports/logo-nealika.png";
 import SocialAuthButtons from "./SocialAuthButtons";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import {
   getErrorMessage,
   normalizePhoneNumber,
@@ -15,6 +25,14 @@ interface LoginPageProps {
   onLoginSuccess: () => void;
 }
 
+const OTP_RESEND_SECONDS = 60;
+
+function formatCountdown(seconds: number) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
 export default function LoginPage({
   onBack,
   onLoginSuccess,
@@ -24,15 +42,36 @@ export default function LoginPage({
   const [showOtpInput, setShowOtpInput] = useState(false);
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [otpCountdown, setOtpCountdown] = useState(0);
+  const [isLeaveOtpDialogOpen, setIsLeaveOtpDialogOpen] = useState(false);
+
+  useEffect(() => {
+    if (otpCountdown <= 0) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setOtpCountdown((currentValue) => currentValue - 1);
+    }, 1000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [otpCountdown]);
+
+  const requestOtp = async () => {
+    await sendOtp(normalizePhoneNumber(phoneNumber));
+    setShowOtpInput(true);
+    setOtpCountdown(OTP_RESEND_SECONDS);
+    toast.success("OTP sent successfully.");
+  };
 
   const handleSendOtp = async (event: React.FormEvent) => {
     event.preventDefault();
     setIsSendingOtp(true);
 
     try {
-      await sendOtp(normalizePhoneNumber(phoneNumber));
-      setShowOtpInput(true);
-      toast.success("OTP sent successfully.");
+      await requestOtp();
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
@@ -46,12 +85,29 @@ export default function LoginPage({
 
     try {
       await verifyOtp(normalizePhoneNumber(phoneNumber), otp);
+      setOtpCountdown(0);
       toast.success("Logged in successfully.");
       onLoginSuccess();
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
       setIsVerifyingOtp(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (otpCountdown > 0) {
+      return;
+    }
+
+    setIsSendingOtp(true);
+
+    try {
+      await requestOtp();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setIsSendingOtp(false);
     }
   };
 
@@ -66,11 +122,32 @@ export default function LoginPage({
     onLoginSuccess();
   };
 
+  const resetOtpStep = () => {
+    setShowOtpInput(false);
+    setOtp("");
+    setOtpCountdown(0);
+  };
+
+  const handleBackNavigation = () => {
+    if (showOtpInput) {
+      setIsLeaveOtpDialogOpen(true);
+      return;
+    }
+
+    onBack();
+  };
+
+  const handleConfirmLeaveOtp = () => {
+    setIsLeaveOtpDialogOpen(false);
+    resetOtpStep();
+    onBack();
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center px-4 py-8">
       <div className="w-full max-w-md">
         <button
-          onClick={onBack}
+          onClick={handleBackNavigation}
           className="flex items-center gap-2 text-slate-600 hover:text-slate-900 mb-6 transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />
@@ -147,25 +224,36 @@ export default function LoginPage({
                     maxLength={6}
                     required
                     />
-                  <p className="text-sm text-slate-500 mt-2">
-                    Code sent to +855 {phoneNumber}
-                  </p>
-                </div>
-                <button
-                  type="submit"
-                  disabled={otp.length < 6 || isVerifyingOtp}
+                      <p className="text-sm text-slate-500 mt-2">
+                        Code sent to +855 {phoneNumber}
+                      </p>
+                      {otpCountdown > 0 ? (
+                        <p className="text-sm text-slate-500 mt-1">
+                          Resend OTP in {formatCountdown(otpCountdown)}
+                        </p>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void handleResendOtp()}
+                          disabled={isSendingOtp}
+                          className="mt-1 text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors disabled:text-slate-400"
+                        >
+                          {isSendingOtp ? "Sending..." : "Resend OTP"}
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={otp.length < 6 || isVerifyingOtp}
                   className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed mb-2"
                 >
                   {isVerifyingOtp ? "Verifying..." : "Verify & Login"}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowOtpInput(false);
-                    setOtp("");
-                  }}
-                  className="w-full px-4 py-2 text-blue-600 hover:text-blue-700 font-medium transition-colors"
-                >
+                  <button
+                    type="button"
+                    onClick={resetOtpStep}
+                    className="w-full px-4 py-2 text-blue-600 hover:text-blue-700 font-medium transition-colors"
+                  >
                   Change Phone Number
                 </button>
               </form>
@@ -202,6 +290,27 @@ export default function LoginPage({
           </p>
         </div>
       </div>
+
+      <AlertDialog
+        open={isLeaveOtpDialogOpen}
+        onOpenChange={setIsLeaveOtpDialogOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Leave OTP Verification?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You are currently verifying an OTP code. If you leave now, you
+              will need to request a new code again.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmLeaveOtp}>
+              Yes, leave
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

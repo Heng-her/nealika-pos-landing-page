@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check, Loader2, Lock, Send, X } from "lucide-react";
+import { toast } from "sonner";
 import abaLogo from "@/imports/ABA_BANK__1_.png";
 import cardsIcon from "@/imports/cards_icons.png";
 import jcbIcon from "@/imports/JCB.png";
@@ -8,6 +9,16 @@ import logo from "@/imports/logo-nealika.png";
 import unionpayIcon from "@/imports/UnionPay__1_.png";
 import visaIcon from "@/imports/Visa_Icn.png";
 import SocialAuthButtons from "./SocialAuthButtons";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import {
   ApiError,
   createPaywayPayment,
@@ -50,8 +61,16 @@ interface PaymentSession {
   transactionId: string;
 }
 
+const OTP_RESEND_SECONDS = 60;
+
 function toDiscountNumber(value: string) {
   return Number(value || 0);
+}
+
+function formatCountdown(seconds: number) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
 function getPaymentFailureMessage(status: PaymentTerminalStatus) {
@@ -107,8 +126,8 @@ export default function CheckoutPage({
   const [otp, setOtp] = useState("");
   const [showOtpInput, setShowOtpInput] = useState(false);
   const [isLoginProcessing, setIsLoginProcessing] = useState(false);
-  const [loginError, setLoginError] = useState("");
-  const [socialError, setSocialError] = useState("");
+  const [otpCountdown, setOtpCountdown] = useState(0);
+  const [isLeaveOtpDialogOpen, setIsLeaveOtpDialogOpen] = useState(false);
 
   const [paymentSession, setPaymentSession] = useState<PaymentSession | null>(
     null,
@@ -387,6 +406,20 @@ export default function CheckoutPage({
     };
   }, [paymentResultStatus, transactionId]);
 
+  useEffect(() => {
+    if (otpCountdown <= 0) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setOtpCountdown((currentValue) => currentValue - 1);
+    }, 1000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [otpCountdown]);
+
   const handleApplyCoupon = async () => {
     if (!selectedPackage || !selectedDurationId) {
       return;
@@ -472,7 +505,7 @@ export default function CheckoutPage({
       if (error instanceof ApiError && error.code === 401) {
         setIsAuthenticated(false);
         setShowLoginDialog(true);
-        setLoginError("Please login first.");
+        toast.error("Please login first.");
       } else {
         setPaymentError(getErrorMessage(error));
       }
@@ -508,15 +541,15 @@ export default function CheckoutPage({
 
   const handleSendOtp = async (event: React.FormEvent) => {
     event.preventDefault();
-    setLoginError("");
-    setSocialError("");
     setIsLoginProcessing(true);
 
     try {
       await sendOtp(normalizePhoneNumber(phoneNumber));
       setShowOtpInput(true);
+      setOtpCountdown(OTP_RESEND_SECONDS);
+      toast.success("OTP sent successfully.");
     } catch (error) {
-      setLoginError(getErrorMessage(error));
+      toast.error(getErrorMessage(error));
     } finally {
       setIsLoginProcessing(false);
     }
@@ -524,38 +557,52 @@ export default function CheckoutPage({
 
   const handleVerifyOtp = async (event: React.FormEvent) => {
     event.preventDefault();
-    setLoginError("");
-    setSocialError("");
     setIsLoginProcessing(true);
 
     try {
       await verifyOtp(normalizePhoneNumber(phoneNumber), otp);
+      setOtpCountdown(0);
       setIsAuthenticated(true);
       setShowLoginDialog(false);
+      toast.success("Logged in successfully.");
       await processPayment();
     } catch (error) {
-      setLoginError(getErrorMessage(error));
+      toast.error(getErrorMessage(error));
     } finally {
       setIsLoginProcessing(false);
     }
   };
 
-  const handleSocialAuthStart = () => {
-    setSocialError("");
-    setLoginError("");
-  };
+  const handleSocialAuthStart = () => {};
 
   const handleSocialAuthError = (message: string) => {
-    setSocialError(message);
-    setLoginError("");
+    toast.error(message);
   };
 
   const handleSocialAuthSuccess = async () => {
-    setSocialError("");
-    setLoginError("");
+    toast.success("Logged in successfully.");
+    setOtpCountdown(0);
     setIsAuthenticated(true);
     setShowLoginDialog(false);
     await processPayment();
+  };
+
+  const handleResendOtp = async () => {
+    if (otpCountdown > 0) {
+      return;
+    }
+
+    setIsLoginProcessing(true);
+
+    try {
+      await sendOtp(normalizePhoneNumber(phoneNumber));
+      setOtpCountdown(OTP_RESEND_SECONDS);
+      toast.success("OTP sent successfully.");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setIsLoginProcessing(false);
+    }
   };
 
   const handlePaymentFrameLoad = () => {
@@ -596,6 +643,31 @@ export default function CheckoutPage({
   const handlePaymentSuccessContinue = () => {
     setShowPaymentSuccessModal(false);
     void onComplete();
+  };
+
+  const resetLoginDialogOtpStep = () => {
+    setShowOtpInput(false);
+    setOtp("");
+    setOtpCountdown(0);
+  };
+
+  const closeLoginDialog = () => {
+    setShowLoginDialog(false);
+    resetLoginDialogOtpStep();
+  };
+
+  const handleLoginDialogClose = () => {
+    if (showOtpInput) {
+      setIsLeaveOtpDialogOpen(true);
+      return;
+    }
+
+    closeLoginDialog();
+  };
+
+  const handleConfirmLeaveOtp = () => {
+    setIsLeaveOtpDialogOpen(false);
+    closeLoginDialog();
   };
 
   if (!selectedPackage) {
@@ -1158,11 +1230,7 @@ export default function CheckoutPage({
                   </p>
                 </div>
                 <button
-                  onClick={() => {
-                    setShowLoginDialog(false);
-                    setLoginError("");
-                    setSocialError("");
-                  }}
+                  onClick={handleLoginDialogClose}
                   className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
                 >
                   <X className="w-5 h-5 text-slate-600" />
@@ -1235,6 +1303,20 @@ export default function CheckoutPage({
                       <p className="text-sm text-slate-500 mt-2">
                         Code sent to +855 {phoneNumber}
                       </p>
+                      {otpCountdown > 0 ? (
+                        <p className="text-sm text-slate-500 mt-1">
+                          Resend OTP in {formatCountdown(otpCountdown)}
+                        </p>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void handleResendOtp()}
+                          disabled={isLoginProcessing}
+                          className="mt-1 text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors disabled:text-slate-400"
+                        >
+                          {isLoginProcessing ? "Sending..." : "Resend OTP"}
+                        </button>
+                      )}
                     </div>
                     <button
                       type="submit"
@@ -1245,21 +1327,13 @@ export default function CheckoutPage({
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        setShowOtpInput(false);
-                        setOtp("");
-                        setLoginError("");
-                      }}
+                      onClick={resetLoginDialogOtpStep}
                       className="w-full px-4 py-2 text-blue-600 hover:text-blue-700 font-medium transition-colors"
                     >
                       Change Phone Number
                     </button>
                   </form>
                 )}
-
-                {loginError ? (
-                  <p className="text-sm text-red-600 mt-3">{loginError}</p>
-                ) : null}
               </div>
 
               <div className="relative my-6">
@@ -1279,10 +1353,6 @@ export default function CheckoutPage({
                 onError={handleSocialAuthError}
                 onStart={handleSocialAuthStart}
               />
-
-              {socialError ? (
-                <p className="text-sm text-amber-700 mt-4">{socialError}</p>
-              ) : null}
             </div>
           </div>
         ) : null}
@@ -1418,6 +1488,27 @@ export default function CheckoutPage({
             </div>
           </div>
         ) : null}
+
+        <AlertDialog
+          open={isLeaveOtpDialogOpen}
+          onOpenChange={setIsLeaveOtpDialogOpen}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Leave OTP Verification?</AlertDialogTitle>
+              <AlertDialogDescription>
+                You are currently verifying an OTP code. If you leave now, you
+                will need to request a new code again.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={handleConfirmLeaveOtp}>
+                Yes, leave
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );
