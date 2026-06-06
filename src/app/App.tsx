@@ -197,7 +197,21 @@ export default function App() {
     pricingPlans[0]?.id ||
     0;
 
-  if (isAuthenticated && !isCheckingAuth) {
+  if (isCheckingAuth) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4">
+        <div className="relative flex items-center justify-center w-24 h-24">
+          <img src={logo} alt="Nealika" className="h-12 animate-pulse z-10" />
+          <div className="absolute inset-0 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
+        </div>
+        <p className="text-slate-500 font-medium text-sm animate-pulse">
+          Initializing your secure workspace...
+        </p>
+      </div>
+    );
+  }
+
+  if (isAuthenticated) {
     return <Dashboard onLogout={handleLogout} />;
   }
 

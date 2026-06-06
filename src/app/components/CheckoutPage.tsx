@@ -178,7 +178,9 @@ export default function CheckoutPage({
 
         setDurationOptions(durations);
         if (durations.length > 0) {
-          setSelectedDurationId((currentValue) => currentValue || durations[0].id);
+          setSelectedDurationId(
+            (currentValue) => currentValue || durations[0].id,
+          );
         }
       } catch (error) {
         if (!isMounted) {
@@ -485,6 +487,11 @@ export default function CheckoutPage({
     }
 
     await processPayment();
+  };
+
+  const handleClosePaymentModal = () => {
+    setIsPaymentModalOpen(false);
+    setIsProcessing(false);
   };
 
   const handleRetryPayment = async () => {
@@ -867,7 +874,11 @@ export default function CheckoutPage({
                           alt="Mastercard"
                           className="h-5"
                         />
-                        <img src={unionpayIcon} alt="UnionPay" className="h-5" />
+                        <img
+                          src={unionpayIcon}
+                          alt="UnionPay"
+                          className="h-5"
+                        />
                         <img src={jcbIcon} alt="JCB" className="h-5" />
                       </div>
                     </div>
@@ -1095,7 +1106,9 @@ export default function CheckoutPage({
 
               <div className="border-t-2 border-slate-300 pt-4">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-lg font-bold text-slate-900">Total</span>
+                  <span className="text-lg font-bold text-slate-900">
+                    Total
+                  </span>
                   <span className="text-2xl font-bold text-blue-600">
                     {isLoadingQuote || !quote
                       ? "Loading..."
@@ -1107,13 +1120,17 @@ export default function CheckoutPage({
                     <span className="text-sm text-slate-500">You save</span>
                     <span className="text-sm font-semibold text-green-600">
                       $
-                      {(quote.duration_discount + quote.coupon_discount).toFixed(2)}
+                      {(
+                        quote.duration_discount + quote.coupon_discount
+                      ).toFixed(2)}
                     </span>
                   </div>
                 ) : null}
                 <p className="text-xs text-slate-500 mt-2">
                   One-time payment for{" "}
-                  {(selectedDuration?.name || "selected duration").toLowerCase()}
+                  {(
+                    selectedDuration?.name || "selected duration"
+                  ).toLowerCase()}
                 </p>
               </div>
 
@@ -1172,7 +1189,9 @@ export default function CheckoutPage({
                           type="tel"
                           value={phoneNumber}
                           onChange={(event) =>
-                            setPhoneNumber(event.target.value.replace(/\D/g, ""))
+                            setPhoneNumber(
+                              event.target.value.replace(/\D/g, ""),
+                            )
                           }
                           placeholder="12 345 678"
                           className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -1289,7 +1308,7 @@ export default function CheckoutPage({
                   </p>
                 </div>
                 <button
-                  onClick={() => setIsPaymentModalOpen(false)}
+                  onClick={handleClosePaymentModal}
                   className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
                 >
                   <X className="w-5 h-5 text-slate-600" />
@@ -1308,8 +1327,7 @@ export default function CheckoutPage({
                   </span>
                 </div>
 
-                {!paymentModalError &&
-                paymentResultStatus === "pending" ? (
+                {!paymentModalError && paymentResultStatus === "pending" ? (
                   <div className="relative h-[540px] rounded-xl border border-slate-200 overflow-hidden bg-slate-50">
                     <iframe
                       key={paymentSession.iframeName}
@@ -1332,10 +1350,12 @@ export default function CheckoutPage({
                 ) : (
                   <div className="rounded-xl border border-red-200 bg-red-50 p-6">
                     <p className="text-red-700 font-medium">
-                      {paymentModalError || "Unable to process payment. Please retry."}
+                      {paymentModalError ||
+                        "Unable to process payment. Please retry."}
                     </p>
                     <p className="text-sm text-red-600 mt-2">
-                      Transaction ID: {transactionId || paymentSession.transactionId}
+                      Transaction ID:{" "}
+                      {transactionId || paymentSession.transactionId}
                     </p>
                   </div>
                 )}
@@ -1361,7 +1381,7 @@ export default function CheckoutPage({
                   ) : null}
 
                   <button
-                    onClick={() => setIsPaymentModalOpen(false)}
+                    onClick={handleClosePaymentModal}
                     className="px-5 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors font-medium"
                   >
                     Close
@@ -1369,7 +1389,8 @@ export default function CheckoutPage({
                 </div>
 
                 <p className="mt-4 text-xs text-slate-500">
-                  Debug reference: {transactionId || paymentSession.transactionId}
+                  Debug reference:{" "}
+                  {transactionId || paymentSession.transactionId}
                 </p>
               </div>
             </div>

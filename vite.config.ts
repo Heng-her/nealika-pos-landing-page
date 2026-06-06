@@ -24,17 +24,17 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
-  server: {
-    port: 5173,
-    open: true,
-    host: '0.0.0.0',
-    allowedHosts: true,
-  },
   resolve: {
     alias: {
       // Alias @ to the src directory
       '@': path.resolve(__dirname, './src'),
     },
+  },
+  server: {
+    // Enable CORS for development server
+    cors: true,
+    host: true,
+    allowedHosts: true,
   },
 
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
