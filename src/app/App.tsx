@@ -9,7 +9,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import CheckoutPage from "./components/CheckoutPage";
 import Dashboard from "./components/Dashboard";
 import Footer from "./components/Footer";
@@ -19,9 +19,10 @@ import logo from "@/imports/logo-nealika.png";
 import {
   clearStoredAuthToken,
   getErrorMessage,
-  getMe,
   getPackages,
+  getProfile,
   getStoredAuthToken,
+  isUnauthorizedError,
   mapPackageToDisplayPackage,
   type DisplayPackage,
 } from "./services/posApi";
@@ -44,7 +45,10 @@ export default function App() {
   );
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isTopBarVisible, setIsTopBarVisible] = useState(true);
-  const [lastScrollY, setLastScrollY] = useState(0);
+  const lastScrollYRef = useRef(0);
+
+  const shouldTrackLandingPageScroll =
+    !isAuthenticated && !showCheckout && !showLoginPage && !isCheckingAuth;
 
   useEffect(() => {
     let isMounted = true;
@@ -55,7 +59,7 @@ export default function App() {
 
       const [packagesResult, meResult] = await Promise.allSettled([
         getPackages(),
-        getStoredAuthToken() ? getMe() : Promise.resolve(null),
+        getStoredAuthToken() ? getProfile() : Promise.resolve(null),
       ]);
 
       if (!isMounted) {
@@ -79,15 +83,20 @@ export default function App() {
       if (meResult.status === "fulfilled") {
         setIsAuthenticated(Boolean(meResult.value));
       } else {
-        clearStoredAuthToken();
-        setIsAuthenticated(false);
+        if (isUnauthorizedError(meResult.reason)) {
+          clearStoredAuthToken();
+          setIsAuthenticated(false);
+          setShowLoginPage(true);
+        } else {
+          setIsAuthenticated(Boolean(getStoredAuthToken()));
+        }
       }
 
       setIsLoadingPackages(false);
       setIsCheckingAuth(false);
     };
 
-    loadInitialState();
+    void loadInitialState();
 
     return () => {
       isMounted = false;
@@ -103,25 +112,32 @@ export default function App() {
   }, [pricingPlans, selectedPackageId]);
 
   useEffect(() => {
+    if (!shouldTrackLandingPageScroll) {
+      lastScrollYRef.current = 0;
+      setIsTopBarVisible(true);
+      return;
+    }
+
     const handleScroll = () => {
       const currentScrollY = window.scrollY;
-      const difference = currentScrollY - lastScrollY;
+      const difference = currentScrollY - lastScrollYRef.current;
 
       if (Math.abs(difference) < 5) {
         return;
       }
 
-      if (currentScrollY > lastScrollY && currentScrollY > 10) {
+      if (currentScrollY > lastScrollYRef.current && currentScrollY > 10) {
         setIsTopBarVisible(false);
       } else {
         setIsTopBarVisible(true);
       }
-      setLastScrollY(currentScrollY);
+
+      lastScrollYRef.current = currentScrollY;
     };
 
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
-  }, [lastScrollY]);
+  }, [shouldTrackLandingPageScroll]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -168,11 +184,12 @@ export default function App() {
     },
   ];
 
-  const handleLogout = () => {
+  const handleLogout = useCallback((options?: { redirectToLogin?: boolean }) => {
     clearStoredAuthToken();
     setIsAuthenticated(false);
-    setShowLoginPage(false);
-  };
+    setShowLoginPage(Boolean(options?.redirectToLogin));
+    setShowCheckout(false);
+  }, []);
 
   const handleLoginSuccess = () => {
     setIsAuthenticated(true);
@@ -707,3 +724,5 @@ export default function App() {
     </div>
   );
 }
+
+// hi

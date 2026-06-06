@@ -276,14 +276,14 @@ export default function SocialAuthButtons({
 
     startAuth();
 
-    const initData = getTelegramWebAppInitData();
-    if (initData) {
-      void runSuccessfulAuth(() => loginWithTelegram({ init_data: initData }));
+    if (!telegramBotUsername) {
+      onError("Telegram login is not configured.");
       return;
     }
 
-    if (!telegramBotUsername) {
-      onError("Telegram login is not configured.");
+    const initData = getTelegramWebAppInitData();
+    if (initData) {
+      void runSuccessfulAuth(() => loginWithTelegram({ init_data: initData }));
       return;
     }
 
