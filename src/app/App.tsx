@@ -30,7 +30,7 @@ import {
 } from "./services/posApi";
 
 const DEFAULT_POS_DEMO_VIDEO_URL =
-  "https://www.youtube.com/watch?v=vIl15M3Dkjk";
+  "https://youtu.be/0rKpjzk02ZY";
 
 type DemoVideoSource =
   | {
@@ -144,6 +144,7 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isTopBarVisible, setIsTopBarVisible] = useState(true);
   const [demoVideoUrl, setDemoVideoUrl] = useState(DEFAULT_POS_DEMO_VIDEO_URL);
+  const [publicSettings, setPublicSettings] = useState<any>(null);
   const lastScrollYRef = useRef(0);
   const demoVideoSource = normalizeDemoVideoSource(demoVideoUrl);
 
@@ -197,8 +198,10 @@ export default function App() {
       }
 
       if (publicSettingsResult.status === "fulfilled") {
+        const settings = publicSettingsResult.value;
+        setPublicSettings(settings);
         const nextDemoVideoUrl =
-          publicSettingsResult.value.pos_demo_video_url?.trim() || "";
+          settings.pos_demo_video_url?.trim() || "";
 
         if (nextDemoVideoUrl) {
           setDemoVideoUrl(nextDemoVideoUrl);
@@ -846,7 +849,7 @@ export default function App() {
         </div>
       </section>
 
-      <Footer />
+      <Footer settings={publicSettings} />
 
         {isVideoModalOpen && demoVideoSource && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
