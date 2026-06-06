@@ -1,4 +1,7 @@
 const DEFAULT_API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL).trim();
+const PUBLIC_SETTINGS_PATH = String(
+  import.meta.env.VITE_PUBLIC_SETTINGS_PATH || "/settings/public",
+).trim();
 const AUTH_TOKEN_KEY = "token";
 const LEGACY_AUTH_TOKEN_KEY = "nealika_pos_token";
 const USER_INFO_KEY = "userinfo";
@@ -105,6 +108,11 @@ export interface UpdateProfilePayload {
   avatar?: string;
   business_name?: string;
   address?: string;
+}
+
+export interface PublicSiteSettings {
+  pos_demo_video_url?: string;
+  [key: string]: unknown;
 }
 
 export interface CurrentSubscription {
@@ -602,6 +610,51 @@ function extractUploadPath(payload: unknown): string {
   return "";
 }
 
+function getFirstStringValue(
+  record: Record<string, unknown>,
+  keys: string[],
+) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+
+  return "";
+}
+
+function extractPublicSiteSettings(data: unknown): PublicSiteSettings {
+  if (!isRecord(data)) {
+    return {};
+  }
+
+  const candidateRecords = [
+    data,
+    isRecord(data.settings) ? data.settings : null,
+    isRecord(data.config) ? data.config : null,
+  ].filter(Boolean) as Record<string, unknown>[];
+
+  for (const record of candidateRecords) {
+    const posDemoVideoUrl = getFirstStringValue(record, [
+      "pos_demo_video_url",
+      "demo_video_url",
+      "watch_demo_url",
+      "video_demo_url",
+      "video_url",
+    ]);
+
+    if (posDemoVideoUrl) {
+      return {
+        ...record,
+        pos_demo_video_url: posDemoVideoUrl,
+      };
+    }
+  }
+
+  return {};
+}
+
 export function getStoredAuthToken() {
   if (typeof window === "undefined") {
     return "";
@@ -1063,4 +1116,9 @@ export async function getPaymentStatus(transactionId: string) {
     requiresAuth: true,
     query: { tid: transactionId },
   });
+}
+
+export async function getPublicSiteSettings() {
+  const data = await apiRequest<unknown>(PUBLIC_SETTINGS_PATH || "/settings/public");
+  return extractPublicSiteSettings(data);
 }
