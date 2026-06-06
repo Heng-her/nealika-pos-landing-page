@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Key, LogOut, Settings, User, Wallet } from "lucide-react";
+import { toast } from "sonner";
 import logo from "@/imports/logo-nealika.png";
 import CheckoutPage from "./CheckoutPage";
 import PaymentPage from "./PaymentPage";
@@ -94,7 +95,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState("");
-  const [profileSuccessMessage, setProfileSuccessMessage] = useState("");
   const [packagesError, setPackagesError] = useState("");
   const [subscriptionError, setSubscriptionError] = useState("");
   const [isLoadingPackages, setIsLoadingPackages] = useState(true);
@@ -253,7 +253,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
     setIsSavingProfile(true);
     setProfileError("");
-    setProfileSuccessMessage("");
 
     try {
       let avatarPath: string | undefined;
@@ -283,7 +282,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
         setProfileError(getErrorMessage(refreshError));
       }
-      setProfileSuccessMessage("Profile updated successfully.");
+      toast.success("Profile updated successfully.");
       setIsEditingProfile(false);
     } catch (error) {
       if (isUnauthorizedError(error)) {
@@ -407,12 +406,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                 isLoadingProfile={isLoadingProfile}
                 isSavingProfile={isSavingProfile}
                 profileError={profileError}
-                profileSuccessMessage={profileSuccessMessage}
-                setProfileSuccessMessage={setProfileSuccessMessage}
                 onCancelEdit={() => {
                   setProfile(savedProfile);
                   setIsEditingProfile(false);
-                  setProfileSuccessMessage("");
                 }}
                 onUpdateProfile={handleUpdateProfile}
               />

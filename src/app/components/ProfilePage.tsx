@@ -24,8 +24,6 @@ interface ProfilePageProps {
   isLoadingProfile: boolean;
   isSavingProfile: boolean;
   profileError: string;
-  profileSuccessMessage: string;
-  setProfileSuccessMessage: (val: string) => void;
   onCancelEdit: () => void;
   onUpdateProfile: (e: React.FormEvent<HTMLFormElement>) => void;
 }
@@ -39,8 +37,6 @@ export default function ProfilePage({
   isLoadingProfile,
   isSavingProfile,
   profileError,
-  profileSuccessMessage,
-  setProfileSuccessMessage,
   onCancelEdit,
   onUpdateProfile,
 }: ProfilePageProps) {
@@ -54,7 +50,6 @@ export default function ProfilePage({
           <button
             onClick={() => {
               setIsEditingProfile(true);
-              setProfileSuccessMessage("");
             }}
             className="flex items-center gap-2 px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
           >
@@ -67,12 +62,6 @@ export default function ProfilePage({
       {profileError && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700 text-sm">
           {profileError}
-        </div>
-      )}
-
-      {profileSuccessMessage && (
-        <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-4 text-green-700 text-sm">
-          {profileSuccessMessage}
         </div>
       )}
 
