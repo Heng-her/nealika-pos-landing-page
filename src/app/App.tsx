@@ -9,22 +9,121 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import CheckoutPage from "./components/CheckoutPage";
 import Dashboard from "./components/Dashboard";
 import Footer from "./components/Footer";
 import LoginPage from "./components/LoginPage";
 import { cn } from "./components/ui/utils";
 import logo from "@/imports/logo-nealika.png";
+import { toast, Toaster } from "sonner";
 import {
   clearStoredAuthToken,
   getErrorMessage,
-  getMe,
   getPackages,
+  getProfile,
+  getPublicSiteSettings,
   getStoredAuthToken,
+  isUnauthorizedError,
   mapPackageToDisplayPackage,
   type DisplayPackage,
 } from "./services/posApi";
+
+const DEFAULT_POS_DEMO_VIDEO_URL =
+  "https://youtu.be/0rKpjzk02ZY";
+
+type DemoVideoSource =
+  | {
+      type: "iframe";
+      src: string;
+    }
+  | {
+      type: "html5";
+      src: string;
+    };
+
+function extractYouTubeVideoId(url: URL) {
+  const host = url.hostname.replace(/^www\./, "");
+
+  if (host === "youtu.be") {
+    return url.pathname.split("/").filter(Boolean)[0] || "";
+  }
+
+  if (host === "youtube.com" || host === "m.youtube.com") {
+    if (url.pathname === "/watch") {
+      return url.searchParams.get("v") || "";
+    }
+
+    if (url.pathname.startsWith("/embed/")) {
+      return url.pathname.split("/embed/")[1]?.split("/")[0] || "";
+    }
+
+    if (url.pathname.startsWith("/shorts/")) {
+      return url.pathname.split("/shorts/")[1]?.split("/")[0] || "";
+    }
+  }
+
+  return "";
+}
+
+function extractVimeoVideoId(url: URL) {
+  const host = url.hostname.replace(/^www\./, "");
+
+  if (host !== "vimeo.com" && host !== "player.vimeo.com") {
+    return "";
+  }
+
+  const segments = url.pathname.split("/").filter(Boolean);
+  return segments[segments.length - 1] || "";
+}
+
+function normalizeDemoVideoSource(
+  value?: string | null,
+): DemoVideoSource | null {
+  const trimmedValue = (value || "").trim();
+
+  if (!trimmedValue) {
+    return null;
+  }
+
+  if (/\.(mp4|webm|ogg|mov)(\?.*)?$/i.test(trimmedValue)) {
+    return {
+      type: "html5",
+      src: trimmedValue,
+    };
+  }
+
+  try {
+    const url = new URL(trimmedValue);
+    const youTubeVideoId = extractYouTubeVideoId(url);
+
+    if (youTubeVideoId) {
+      return {
+        type: "iframe",
+        src: `https://www.youtube.com/embed/${youTubeVideoId}?autoplay=1&rel=0`,
+      };
+    }
+
+    const vimeoVideoId = extractVimeoVideoId(url);
+
+    if (vimeoVideoId) {
+      return {
+        type: "iframe",
+        src: `https://player.vimeo.com/video/${vimeoVideoId}?autoplay=1`,
+      };
+    }
+  } catch {
+    return {
+      type: "iframe",
+      src: trimmedValue,
+    };
+  }
+
+  return {
+    type: "iframe",
+    src: trimmedValue,
+  };
+}
 
 export default function App() {
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
@@ -44,7 +143,13 @@ export default function App() {
   );
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isTopBarVisible, setIsTopBarVisible] = useState(true);
-  const [lastScrollY, setLastScrollY] = useState(0);
+  const [demoVideoUrl, setDemoVideoUrl] = useState(DEFAULT_POS_DEMO_VIDEO_URL);
+  const [publicSettings, setPublicSettings] = useState<any>(null);
+  const lastScrollYRef = useRef(0);
+  const demoVideoSource = normalizeDemoVideoSource(demoVideoUrl);
+
+  const shouldTrackLandingPageScroll =
+    !isAuthenticated && !showCheckout && !showLoginPage && !isCheckingAuth;
 
   useEffect(() => {
     let isMounted = true;
@@ -53,17 +158,21 @@ export default function App() {
       setIsLoadingPackages(true);
       setPackagesError("");
 
-      const [packagesResult, meResult] = await Promise.allSettled([
-        getPackages(),
-        getStoredAuthToken() ? getMe() : Promise.resolve(null),
-      ]);
+      const [packagesResult, meResult, publicSettingsResult] =
+        await Promise.allSettled([
+          getPackages(),
+          getStoredAuthToken() ? getProfile() : Promise.resolve(null),
+          getPublicSiteSettings(),
+        ]);
 
       if (!isMounted) {
         return;
       }
 
       if (packagesResult.status === "fulfilled") {
-        const mappedPackages = packagesResult.value.map(mapPackageToDisplayPackage);
+        const mappedPackages = packagesResult.value.map(
+          mapPackageToDisplayPackage,
+        );
         setPricingPlans(mappedPackages);
 
         if (!selectedPackageId && mappedPackages.length > 0) {
@@ -79,15 +188,31 @@ export default function App() {
       if (meResult.status === "fulfilled") {
         setIsAuthenticated(Boolean(meResult.value));
       } else {
-        clearStoredAuthToken();
-        setIsAuthenticated(false);
+        if (isUnauthorizedError(meResult.reason)) {
+          clearStoredAuthToken();
+          setIsAuthenticated(false);
+          setShowLoginPage(true);
+        } else {
+          setIsAuthenticated(Boolean(getStoredAuthToken()));
+        }
+      }
+
+      if (publicSettingsResult.status === "fulfilled") {
+        const settings = publicSettingsResult.value;
+        setPublicSettings(settings);
+        const nextDemoVideoUrl =
+          settings.pos_demo_video_url?.trim() || "";
+
+        if (nextDemoVideoUrl) {
+          setDemoVideoUrl(nextDemoVideoUrl);
+        }
       }
 
       setIsLoadingPackages(false);
       setIsCheckingAuth(false);
     };
 
-    loadInitialState();
+    void loadInitialState();
 
     return () => {
       isMounted = false;
@@ -103,25 +228,32 @@ export default function App() {
   }, [pricingPlans, selectedPackageId]);
 
   useEffect(() => {
+    if (!shouldTrackLandingPageScroll) {
+      lastScrollYRef.current = 0;
+      setIsTopBarVisible(true);
+      return;
+    }
+
     const handleScroll = () => {
       const currentScrollY = window.scrollY;
-      const difference = currentScrollY - lastScrollY;
+      const difference = currentScrollY - lastScrollYRef.current;
 
       if (Math.abs(difference) < 5) {
         return;
       }
 
-      if (currentScrollY > lastScrollY && currentScrollY > 10) {
+      if (currentScrollY > lastScrollYRef.current && currentScrollY > 10) {
         setIsTopBarVisible(false);
       } else {
         setIsTopBarVisible(true);
       }
-      setLastScrollY(currentScrollY);
+
+      lastScrollYRef.current = currentScrollY;
     };
 
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
-  }, [lastScrollY]);
+  }, [shouldTrackLandingPageScroll]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -168,11 +300,12 @@ export default function App() {
     },
   ];
 
-  const handleLogout = () => {
+  const handleLogout = useCallback((options?: { redirectToLogin?: boolean }) => {
     clearStoredAuthToken();
     setIsAuthenticated(false);
-    setShowLoginPage(false);
-  };
+    setShowLoginPage(Boolean(options?.redirectToLogin));
+    setShowCheckout(false);
+  }, []);
 
   const handleLoginSuccess = () => {
     setIsAuthenticated(true);
@@ -191,53 +324,88 @@ export default function App() {
     setShowCheckout(false);
   };
 
+  const handleOpenVideoModal = () => {
+    if (!demoVideoSource) {
+      toast.error("Demo video is not available right now.");
+      return;
+    }
+
+    setIsVideoModalOpen(true);
+  };
+
   const checkoutDefaultPackageId =
     selectedPackageId ||
     pricingPlans.find((item) => item.highlighted)?.id ||
     pricingPlans[0]?.id ||
     0;
 
+  const toastUi = (
+    <Toaster
+      position="top-right"
+      richColors
+      closeButton
+      toastOptions={{
+        className: "shadow-lg",
+      }}
+    />
+  );
+
   if (isCheckingAuth) {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4">
-        <div className="relative flex items-center justify-center w-24 h-24">
-          <img src={logo} alt="Nealika" className="h-12 animate-pulse z-10" />
-          <div className="absolute inset-0 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
+      <>
+        <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4">
+          <div className="relative flex items-center justify-center w-24 h-24">
+            <img src={logo} alt="Nealika" className="h-12 animate-pulse z-10" />
+            <div className="absolute inset-0 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
+          </div>
+          <p className="text-slate-500 font-medium text-sm animate-pulse">
+            Initializing your secure workspace...
+          </p>
         </div>
-        <p className="text-slate-500 font-medium text-sm animate-pulse">
-          Initializing your secure workspace...
-        </p>
-      </div>
+        {toastUi}
+      </>
     );
   }
 
   if (isAuthenticated) {
-    return <Dashboard onLogout={handleLogout} />;
+    return (
+      <>
+        <Dashboard onLogout={handleLogout} />
+        {toastUi}
+      </>
+    );
   }
 
   if (showCheckout) {
     return (
-      <CheckoutPage
-        packages={pricingPlans}
-        defaultPackageId={checkoutDefaultPackageId}
-        currentPackageId={null}
-        onBack={() => setShowCheckout(false)}
-        onComplete={handleCheckoutComplete}
-      />
+      <>
+        <CheckoutPage
+          packages={pricingPlans}
+          defaultPackageId={checkoutDefaultPackageId}
+          currentPackageId={null}
+          onBack={() => setShowCheckout(false)}
+          onComplete={handleCheckoutComplete}
+        />
+        {toastUi}
+      </>
     );
   }
 
   if (showLoginPage) {
     return (
-      <LoginPage
-        onBack={() => setShowLoginPage(false)}
-        onLoginSuccess={handleLoginSuccess}
-      />
+      <>
+        <LoginPage
+          onBack={() => setShowLoginPage(false)}
+          onLoginSuccess={handleLoginSuccess}
+        />
+        {toastUi}
+      </>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
+    <>
+      <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
       <header
         className={cn(
           "bg-white sticky top-0 z-50 shadow-sm transition-transform duration-300 ease-in-out",
@@ -503,7 +671,7 @@ export default function App() {
               Start Free Trial
             </button>
             <button
-              onClick={() => setIsVideoModalOpen(true)}
+              onClick={handleOpenVideoModal}
               className="px-8 py-3 text-lg font-medium text-white bg-white/10 backdrop-blur-sm border-2 border-white/30 rounded-lg hover:bg-white/20 transition-colors"
             >
               Watch Demo
@@ -681,29 +849,42 @@ export default function App() {
         </div>
       </section>
 
-      <Footer />
+      <Footer settings={publicSettings} />
 
-      {isVideoModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="relative w-full max-w-5xl bg-slate-900 rounded-2xl overflow-hidden shadow-2xl">
-            <button
-              onClick={() => setIsVideoModalOpen(false)}
-              className="absolute top-4 right-4 z-10 p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
-            >
-              <X className="w-6 h-6 text-white" />
-            </button>
-            <div className="relative aspect-video">
-              <iframe
-                src="https://www.youtube.com/embed/vIl15M3Dkjk?autoplay=1"
-                title="Nealika POS Demo"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                className="w-full h-full"
-              ></iframe>
+        {isVideoModalOpen && demoVideoSource && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <div className="relative w-full max-w-5xl bg-slate-900 rounded-2xl overflow-hidden shadow-2xl">
+              <button
+                onClick={() => setIsVideoModalOpen(false)}
+                className="absolute top-4 right-4 z-10 p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
+              >
+                <X className="w-6 h-6 text-white" />
+              </button>
+              <div className="relative aspect-video">
+                {demoVideoSource.type === "html5" ? (
+                  <video
+                    src={demoVideoSource.src}
+                    controls
+                    autoPlay
+                    className="w-full h-full bg-black"
+                  />
+                ) : (
+                  <iframe
+                    src={demoVideoSource.src}
+                    title="Nealika POS Demo"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                    className="w-full h-full"
+                  ></iframe>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+      {toastUi}
+    </>
   );
 }
+
+// hi
