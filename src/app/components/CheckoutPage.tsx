@@ -23,6 +23,7 @@ import {
   ApiError,
   createPaywayPayment,
   getCheckoutQuote,
+  getCurrentSubscription,
   getErrorMessage,
   getPaymentStatus,
   getStoredAuthToken,
@@ -41,8 +42,12 @@ interface CheckoutPageProps {
   packages: DisplayPackage[];
   defaultPackageId: number;
   currentPackageId: number | null;
+  mode?: "standard" | "free_trial";
+  freeTrialCouponCode?: string;
   onBack: () => void;
   onComplete: () => void;
+  onOpenTerms: () => void;
+  onOpenPrivacy: () => void;
 }
 
 type PaymentMethod = "khqr" | "card";
@@ -93,9 +98,17 @@ export default function CheckoutPage({
   packages,
   defaultPackageId,
   currentPackageId,
+  mode = "standard",
+  freeTrialCouponCode = "",
   onBack,
   onComplete,
+  onOpenTerms,
+  onOpenPrivacy,
 }: CheckoutPageProps) {
+  const isFreeTrialFlow = mode === "free_trial";
+  const normalizedFreeTrialCouponCode = freeTrialCouponCode
+    .trim()
+    .toUpperCase();
   const [selectedPackageId, setSelectedPackageId] = useState(defaultPackageId);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("khqr");
   const [isProcessing, setIsProcessing] = useState(false);
@@ -106,8 +119,12 @@ export default function CheckoutPage({
   const [isAuthenticated, setIsAuthenticated] = useState(
     Boolean(getStoredAuthToken()),
   );
-  const [couponCode, setCouponCode] = useState("");
-  const [appliedCouponCode, setAppliedCouponCode] = useState("");
+  const [couponCode, setCouponCode] = useState(
+    isFreeTrialFlow ? normalizedFreeTrialCouponCode : "",
+  );
+  const [appliedCouponCode, setAppliedCouponCode] = useState(
+    isFreeTrialFlow ? normalizedFreeTrialCouponCode : "",
+  );
   const [couponError, setCouponError] = useState("");
   const [durationOptions, setDurationOptions] = useState<
     ApiSubscriptionDuration[]
@@ -145,18 +162,29 @@ export default function CheckoutPage({
 
   const selectedPackage =
     packages.find((pkg) => pkg.id === selectedPackageId) || packages[0];
+  const availableDurationOptions = useMemo(() => {
+    if (!isFreeTrialFlow) {
+      return durationOptions;
+    }
+
+    return durationOptions.filter(
+      (option) => option.months === 1 || option.months === 3,
+    );
+  }, [durationOptions, isFreeTrialFlow]);
 
   const selectedDuration = useMemo(() => {
     return (
-      durationOptions.find((option) => option.id === selectedDurationId) || null
+      availableDurationOptions.find((option) => option.id === selectedDurationId) ||
+      null
     );
-  }, [durationOptions, selectedDurationId]);
+  }, [availableDurationOptions, selectedDurationId]);
 
   const packageFeatures = selectedPackage?.features || [];
   const packagePrice = selectedPackage?.price || 0;
   const packageName = selectedPackage?.name || "Package";
 
   const hasCurrentPackage = currentPackageId !== null;
+  const isPublicCheckoutFlow = currentPackageId === null;
   const isUpgrade =
     hasCurrentPackage && selectedPackageId > (currentPackageId || 0);
   const isDowngrade =
@@ -170,6 +198,24 @@ export default function CheckoutPage({
     paymentResultStatus === "failed" ||
     paymentResultStatus === "cancelled" ||
     paymentResultStatus === "expired";
+  const isZeroTotalCheckout = Boolean(quote) && quote.total <= 0;
+  const isFreeTrialActivation = isFreeTrialFlow && isZeroTotalCheckout;
+  const requiresFreeTrialSupport = isFreeTrialFlow && !isZeroTotalCheckout;
+  const submitButtonLabel = isFreeTrialActivation
+    ? "Activate Free Trial"
+    : isZeroTotalCheckout
+      ? `Activate ${actionType}`
+      : `Complete ${actionType}`;
+  const successModalTitle = isFreeTrialActivation
+    ? "Free Trial Activated"
+    : isZeroTotalCheckout
+      ? "Subscription Activated"
+      : "Payment Successful";
+  const successModalDescription = isFreeTrialActivation
+    ? "Your free trial has been activated successfully."
+    : isZeroTotalCheckout
+      ? "Your subscription has been activated successfully."
+      : "Your subscription has been updated successfully.";
 
   useEffect(() => {
     if (!packages.length) {
@@ -181,6 +227,20 @@ export default function CheckoutPage({
       setSelectedPackageId(defaultPackageId || packages[0].id);
     }
   }, [defaultPackageId, packages, selectedPackageId]);
+
+  useEffect(() => {
+    if (!isFreeTrialFlow) {
+      return;
+    }
+
+    setCouponCode(normalizedFreeTrialCouponCode);
+    setAppliedCouponCode(normalizedFreeTrialCouponCode);
+    setCouponError(
+      normalizedFreeTrialCouponCode
+        ? ""
+        : "Free trial coupon is not configured right now.",
+    );
+  }, [isFreeTrialFlow, normalizedFreeTrialCouponCode]);
 
   useEffect(() => {
     let isMounted = true;
@@ -220,6 +280,21 @@ export default function CheckoutPage({
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (availableDurationOptions.length === 0) {
+      setSelectedDurationId(null);
+      return;
+    }
+
+    const durationStillExists = availableDurationOptions.some(
+      (option) => option.id === selectedDurationId,
+    );
+
+    if (!durationStillExists) {
+      setSelectedDurationId(availableDurationOptions[0].id);
+    }
+  }, [availableDurationOptions, selectedDurationId]);
 
   const loadQuote = async (
     packageId: number,
@@ -421,6 +496,10 @@ export default function CheckoutPage({
   }, [otpCountdown]);
 
   const handleApplyCoupon = async () => {
+    if (isFreeTrialFlow) {
+      return;
+    }
+
     if (!selectedPackage || !selectedDurationId) {
       return;
     }
@@ -444,6 +523,10 @@ export default function CheckoutPage({
   };
 
   const handleRemoveCoupon = async () => {
+    if (isFreeTrialFlow) {
+      return;
+    }
+
     if (!selectedPackage || !selectedDurationId) {
       return;
     }
@@ -459,9 +542,54 @@ export default function CheckoutPage({
     }
   };
 
+  const shouldSkipPaymentForExistingSubscription = async () => {
+    if (!isPublicCheckoutFlow) {
+      return false;
+    }
+
+    try {
+      const currentSubscription = await getCurrentSubscription();
+
+      if (!currentSubscription) {
+        return false;
+      }
+
+      toast.info(
+        "You already have an active subscription. Redirecting to your dashboard.",
+      );
+      setShowLoginDialog(false);
+      setPaymentError("");
+      setPaymentStatusMessage("");
+      onBack();
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 401) {
+        setIsAuthenticated(false);
+        setShowLoginDialog(true);
+        toast.error("Please login first.");
+        return true;
+      }
+
+      setPaymentError(getErrorMessage(error));
+      return true;
+    }
+  };
+
   const processPayment = async () => {
     if (!selectedPackage || !selectedDurationId) {
       setPaymentError("Please select a package and duration first.");
+      return;
+    }
+
+    if (isFreeTrialFlow && !normalizedFreeTrialCouponCode) {
+      setPaymentError("Free trial coupon is not configured right now.");
+      return;
+    }
+
+    if (requiresFreeTrialSupport) {
+      setPaymentError(
+        "The free trial coupon must make the total fully free. Please contact support.",
+      );
       return;
     }
 
@@ -471,12 +599,35 @@ export default function CheckoutPage({
     setPaymentStatusMessage("");
 
     try {
+      const shouldSkipPayment = await shouldSkipPaymentForExistingSubscription();
+      if (shouldSkipPayment) {
+        setIsProcessing(false);
+        return;
+      }
+
       const response = await createPaywayPayment({
         package_id: selectedPackage.id,
         duration_id: selectedDurationId,
         coupon_code: appliedCouponCode,
-        payment_method: paymentMethod,
+        ...(isZeroTotalCheckout ? {} : { payment_method: paymentMethod }),
       });
+      const normalizedStatus = normalizePaymentStatus(response.status);
+
+      if (isZeroTotalCheckout && normalizedStatus === "paid") {
+        setTransactionId(response.transaction_id || "");
+        setPaymentResultStatus("paid");
+        setPaymentError("");
+        setPaymentModalError("");
+        setIsPaymentModalOpen(false);
+        setShowSelfRedirectFallback(false);
+        setHasSubmittedPaymentForm(false);
+        setHasIframeLoaded(false);
+        setPaymentSession(null);
+        setShowPaymentSuccessModal(true);
+        setPaymentStatusMessage("Free trial activated.");
+        setIsProcessing(false);
+        return;
+      }
 
       if (
         !response.checkout_url ||
@@ -793,13 +944,19 @@ export default function CheckoutPage({
                 Select Subscription Duration
               </h2>
               <p className="text-sm text-slate-600 mb-6">
-                Choose how long you want to subscribe. Longer durations offer
-                better savings!
+                {isFreeTrialFlow
+                  ? "Free trial supports 1 month or 3 months only. Your backend coupon is applied automatically."
+                  : "Choose how long you want to subscribe. Longer durations offer better savings!"}
               </p>
 
               {durationError ? (
                 <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
                   {durationError}
+                </div>
+              ) : isFreeTrialFlow && availableDurationOptions.length === 0 ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+                  Free trial is available only for 1 month and 3 months, but
+                  those durations are not configured right now.
                 </div>
               ) : isLoadingDurations ? (
                 <div className="grid md:grid-cols-2 gap-4">
@@ -812,7 +969,7 @@ export default function CheckoutPage({
                 </div>
               ) : (
                 <div className="grid md:grid-cols-2 gap-4">
-                  {durationOptions.map((option) => {
+                  {availableDurationOptions.map((option) => {
                     const discount = toDiscountNumber(option.discount_percent);
                     const durationPrice =
                       packagePrice * option.months * (1 - discount / 100);
@@ -871,115 +1028,132 @@ export default function CheckoutPage({
               )}
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm p-6">
-              <h2 className="text-xl font-bold text-slate-900 mb-6">
-                Payment Method
-              </h2>
+            {isFreeTrialFlow || isZeroTotalCheckout ? (
+              <div className="bg-white rounded-xl shadow-sm p-6">
+                <h2 className="text-xl font-bold text-slate-900 mb-3">
+                  No Payment Needed
+                </h2>
+                <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-green-700">
+                  No payment method is needed for this checkout. Once the total
+                  is free, your plan will activate automatically.
+                </div>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl shadow-sm p-6">
+                <h2 className="text-xl font-bold text-slate-900 mb-6">
+                  Payment Method
+                </h2>
 
-              <div className="space-y-3 mb-6">
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod("khqr")}
-                  className={`w-full p-4 border-2 rounded-xl transition-all flex items-center justify-between ${
-                    paymentMethod === "khqr"
-                      ? "border-blue-600 bg-blue-50"
-                      : "border-slate-200 hover:border-slate-300"
-                  }`}
-                >
-                  <div className="flex items-center gap-4">
-                    <img
-                      src={abaLogo}
-                      alt="ABA KHQR"
-                      className="w-16 h-16 rounded-xl"
-                    />
-                    <div className="text-left">
-                      <p className="font-semibold text-slate-900 text-lg">
-                        ABA KHQR
-                      </p>
-                      <p className="text-sm text-slate-600">
-                        Scan to pay with any banking app
-                      </p>
-                    </div>
-                  </div>
-                  <svg
-                    className={`w-6 h-6 transition-colors ${
+                <div className="space-y-3 mb-6">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod("khqr")}
+                    className={`w-full p-4 border-2 rounded-xl transition-all flex items-center justify-between ${
                       paymentMethod === "khqr"
-                        ? "text-blue-600"
-                        : "text-slate-400"
+                        ? "border-blue-600 bg-blue-50"
+                        : "border-slate-200 hover:border-slate-300"
                     }`}
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 5l7 7-7 7"
-                    />
-                  </svg>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod("card")}
-                  className={`w-full p-4 border-2 rounded-xl transition-all flex items-center justify-between ${
-                    paymentMethod === "card"
-                      ? "border-blue-600 bg-blue-50"
-                      : "border-slate-200 hover:border-slate-300"
-                  }`}
-                >
-                  <div className="flex items-center gap-4">
-                    <img
-                      src={cardsIcon}
-                      alt="Credit/Debit Card"
-                      className="w-16 h-16 rounded-xl"
-                    />
-                    <div className="text-left">
-                      <p className="font-semibold text-slate-900 text-lg">
-                        Credit/Debit Card
-                      </p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <img src={visaIcon} alt="Visa" className="h-5" />
-                        <img
-                          src={mastercardIcon}
-                          alt="Mastercard"
-                          className="h-5"
-                        />
-                        <img
-                          src={unionpayIcon}
-                          alt="UnionPay"
-                          className="h-5"
-                        />
-                        <img src={jcbIcon} alt="JCB" className="h-5" />
+                    <div className="flex items-center gap-4">
+                      <img
+                        src={abaLogo}
+                        alt="ABA KHQR"
+                        className="w-16 h-16 rounded-xl"
+                      />
+                      <div className="text-left">
+                        <p className="font-semibold text-slate-900 text-lg">
+                          ABA KHQR
+                        </p>
+                        <p className="text-sm text-slate-600">
+                          Scan to pay with any banking app
+                        </p>
                       </div>
                     </div>
-                  </div>
-                  <svg
-                    className={`w-6 h-6 transition-colors ${
+                    <svg
+                      className={`w-6 h-6 transition-colors ${
+                        paymentMethod === "khqr"
+                          ? "text-blue-600"
+                          : "text-slate-400"
+                      }`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 5l7 7-7 7"
+                      />
+                    </svg>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod("card")}
+                    className={`w-full p-4 border-2 rounded-xl transition-all flex items-center justify-between ${
                       paymentMethod === "card"
-                        ? "text-blue-600"
-                        : "text-slate-400"
+                        ? "border-blue-600 bg-blue-50"
+                        : "border-slate-200 hover:border-slate-300"
                     }`}
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 5l7 7-7 7"
-                    />
-                  </svg>
-                </button>
+                    <div className="flex items-center gap-4">
+                      <img
+                        src={cardsIcon}
+                        alt="Credit/Debit Card"
+                        className="w-16 h-16 rounded-xl"
+                      />
+                      <div className="text-left">
+                        <p className="font-semibold text-slate-900 text-lg">
+                          Credit/Debit Card
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <img src={visaIcon} alt="Visa" className="h-5" />
+                          <img
+                            src={mastercardIcon}
+                            alt="Mastercard"
+                            className="h-5"
+                          />
+                          <img
+                            src={unionpayIcon}
+                            alt="UnionPay"
+                            className="h-5"
+                          />
+                          <img src={jcbIcon} alt="JCB" className="h-5" />
+                        </div>
+                      </div>
+                    </div>
+                    <svg
+                      className={`w-6 h-6 transition-colors ${
+                        paymentMethod === "card"
+                          ? "text-blue-600"
+                          : "text-slate-400"
+                      }`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 5l7 7-7 7"
+                      />
+                    </svg>
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             <button
               onClick={handleSubmit}
               disabled={
-                isProcessing || isLoadingDurations || isLoadingQuote || !quote
+                isProcessing ||
+                isLoadingDurations ||
+                isLoadingQuote ||
+                !quote ||
+                (isFreeTrialFlow &&
+                  (!normalizedFreeTrialCouponCode || requiresFreeTrialSupport))
               }
               className="w-full px-6 py-4 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
@@ -987,16 +1161,22 @@ export default function CheckoutPage({
                 <>Processing...</>
               ) : (
                 <>
-                  <Lock className="w-5 h-5" />
-                  Complete {actionType}
+                  {isZeroTotalCheckout ? (
+                    <Check className="w-5 h-5" />
+                  ) : (
+                    <Lock className="w-5 h-5" />
+                  )}
+                  {submitButtonLabel}
                 </>
               )}
             </button>
 
-            <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
-              <Lock className="w-4 h-4" />
-              Secure payment powered by Nealika Co.,LTD.
-            </div>
+            {!isZeroTotalCheckout ? (
+              <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
+                <Lock className="w-4 h-4" />
+                Secure payment powered by Nealika Co.,LTD.
+              </div>
+            ) : null}
 
             {paymentStatusMessage ? (
               <p className="text-sm text-blue-700 text-center">
@@ -1061,7 +1241,23 @@ export default function CheckoutPage({
                 <h3 className="font-semibold text-slate-900 mb-3">
                   Have a Coupon?
                 </h3>
-                {!appliedCouponCode ? (
+                {isFreeTrialFlow ? (
+                  <div className="rounded-lg border border-green-200 bg-green-50 p-3">
+                    <div className="flex items-center gap-2">
+                      <Check className="w-4 h-4 text-green-600" />
+                      <span className="text-sm font-medium text-green-700">
+                        {normalizedFreeTrialCouponCode || "FREE"} applied
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs text-green-700/90">
+                      This free trial coupon is applied automatically from the
+                      backend.
+                    </p>
+                    {couponError ? (
+                      <p className="text-xs text-red-600 mt-2">{couponError}</p>
+                    ) : null}
+                  </div>
+                ) : !appliedCouponCode ? (
                   <div>
                     <div className="flex gap-2">
                       <input
@@ -1130,10 +1326,17 @@ export default function CheckoutPage({
                   {quoteError}
                 </div>
               ) : null}
+              {isFreeTrialFlow && quote && quote.total > 0 ? (
+                <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  The current free coupon does not make this checkout fully
+                  free. Please update the backend free-trial coupon or contact
+                  support.
+                </div>
+              ) : null}
 
               <div className="border-t border-slate-200 pt-4 mb-6">
                 <div className="flex items-center justify-between mb-2 text-slate-600">
-                  <span>Base Price</span>
+                  <span>Price</span>
                   <span>
                     {isLoadingQuote || !quote
                       ? "Loading..."
@@ -1143,7 +1346,7 @@ export default function CheckoutPage({
                 {quote && quote.duration_discount > 0 ? (
                   <div className="flex items-center justify-between mb-2 text-green-600">
                     <span>
-                      Duration Discount (
+                      Discount (
                       {selectedDuration
                         ? toDiscountNumber(selectedDuration.discount_percent)
                         : 0}
@@ -1184,7 +1387,9 @@ export default function CheckoutPage({
                   <span className="text-2xl font-bold text-blue-600">
                     {isLoadingQuote || !quote
                       ? "Loading..."
-                      : `$${quote.total.toFixed(2)}`}
+                      : quote.total <= 0
+                        ? "Free"
+                        : `$${quote.total.toFixed(2)}`}
                   </span>
                 </div>
                 {quote && quote.discount > 0 ? (
@@ -1199,18 +1404,32 @@ export default function CheckoutPage({
                   </div>
                 ) : null}
                 <p className="text-xs text-slate-500 mt-2">
-                  One-time payment for{" "}
-                  {(
-                    selectedDuration?.name || "selected duration"
-                  ).toLowerCase()}
+                  {isZeroTotalCheckout
+                    ? "Free access for "
+                    : "One-time payment for "}
+                  {(selectedDuration?.name || "selected duration").toLowerCase()}
                 </p>
               </div>
 
               <div className="mt-6 p-4 bg-slate-50 rounded-lg">
                 <p className="text-xs text-slate-600">
-                  By completing this purchase, you agree to our Terms of Service
-                  and Privacy Policy. You can cancel your subscription at any
-                  time.
+                  By completing this purchase, you agree to our{" "}
+                  <button
+                    type="button"
+                    onClick={onOpenTerms}
+                    className="text-blue-600 hover:underline"
+                  >
+                    Terms of Service
+                  </button>{" "}
+                  and{" "}
+                  <button
+                    type="button"
+                    onClick={onOpenPrivacy}
+                    className="text-blue-600 hover:underline"
+                  >
+                    Privacy Policy
+                  </button>
+                  . You can cancel your subscription at any time.
                 </p>
               </div>
             </div>
@@ -1474,10 +1693,10 @@ export default function CheckoutPage({
                 <Check className="w-8 h-8" />
               </div>
               <h3 className="text-2xl font-bold text-slate-900 mb-2">
-                Payment Successful
+                {successModalTitle}
               </h3>
               <p className="text-slate-600 mb-6">
-                Your subscription has been updated successfully.
+                {successModalDescription}
               </p>
               <button
                 onClick={handlePaymentSuccessContinue}

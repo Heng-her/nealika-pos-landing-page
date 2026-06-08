@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import CheckoutPage from "./components/CheckoutPage";
 import Dashboard from "./components/Dashboard";
 import Footer from "./components/Footer";
+import LegalPage, { type LegalPageType } from "./components/LegalPage";
 import LoginPage from "./components/LoginPage";
 import { cn } from "./components/ui/utils";
 import logo from "@/imports/logo-nealika.png";
@@ -27,10 +28,12 @@ import {
   isUnauthorizedError,
   mapPackageToDisplayPackage,
   type DisplayPackage,
+  type PublicSiteSettings,
 } from "./services/posApi";
 
 const DEFAULT_POS_DEMO_VIDEO_URL =
   "https://youtu.be/0rKpjzk02ZY";
+const DEFAULT_BROWSER_TITLE = "POS | Nealika Co.,LTD.";
 
 type DemoVideoSource =
   | {
@@ -41,6 +44,8 @@ type DemoVideoSource =
       type: "html5";
       src: string;
     };
+
+type CheckoutMode = "standard" | "free_trial";
 
 function extractYouTubeVideoId(url: URL) {
   const host = url.hostname.replace(/^www\./, "");
@@ -125,13 +130,33 @@ function normalizeDemoVideoSource(
   };
 }
 
+function getLegalPageTypeFromPath(pathname = window.location.pathname) {
+  if (pathname === "/terms-of-service" || pathname === "/terms-and-conditions") {
+    return "terms";
+  }
+
+  if (pathname === "/privacy-policy") {
+    return "privacy";
+  }
+
+  return null;
+}
+
+function getLegalPagePath(type: LegalPageType) {
+  return type === "terms" ? "/terms-of-service" : "/privacy-policy";
+}
+
 export default function App() {
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [showLoginPage, setShowLoginPage] = useState(false);
+  const [legalPageType, setLegalPageType] = useState<LegalPageType | null>(
+    getLegalPageTypeFromPath(),
+  );
   const [isAuthenticated, setIsAuthenticated] = useState(
     Boolean(getStoredAuthToken()),
   );
   const [showCheckout, setShowCheckout] = useState(false);
+  const [checkoutMode, setCheckoutMode] = useState<CheckoutMode>("standard");
   const [selectedPackageId, setSelectedPackageId] = useState<number | null>(
     null,
   );
@@ -141,10 +166,12 @@ export default function App() {
   const [isCheckingAuth, setIsCheckingAuth] = useState(
     Boolean(getStoredAuthToken()),
   );
+  const [isLoadingPublicSettings, setIsLoadingPublicSettings] = useState(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isTopBarVisible, setIsTopBarVisible] = useState(true);
   const [demoVideoUrl, setDemoVideoUrl] = useState(DEFAULT_POS_DEMO_VIDEO_URL);
-  const [publicSettings, setPublicSettings] = useState<any>(null);
+  const [publicSettings, setPublicSettings] =
+    useState<PublicSiteSettings | null>(null);
   const lastScrollYRef = useRef(0);
   const demoVideoSource = normalizeDemoVideoSource(demoVideoUrl);
 
@@ -152,11 +179,21 @@ export default function App() {
     !isAuthenticated && !showCheckout && !showLoginPage && !isCheckingAuth;
 
   useEffect(() => {
+    const handlePopState = () => {
+      setLegalPageType(getLegalPageTypeFromPath());
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
     let isMounted = true;
 
     const loadInitialState = async () => {
       setIsLoadingPackages(true);
       setPackagesError("");
+      setIsLoadingPublicSettings(true);
 
       const [packagesResult, meResult, publicSettingsResult] =
         await Promise.allSettled([
@@ -206,10 +243,13 @@ export default function App() {
         if (nextDemoVideoUrl) {
           setDemoVideoUrl(nextDemoVideoUrl);
         }
+      } else {
+        setPublicSettings(null);
       }
 
       setIsLoadingPackages(false);
       setIsCheckingAuth(false);
+      setIsLoadingPublicSettings(false);
     };
 
     void loadInitialState();
@@ -271,6 +311,24 @@ export default function App() {
     };
   }, [isVideoModalOpen]);
 
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    if (legalPageType === "terms") {
+      document.title = "Terms of Service";
+      return;
+    }
+
+    if (legalPageType === "privacy") {
+      document.title = "Privacy Policy";
+      return;
+    }
+
+    document.title = DEFAULT_BROWSER_TITLE;
+  }, [legalPageType]);
+
   const features = [
     {
       icon: CreditCard,
@@ -312,16 +370,64 @@ export default function App() {
     setShowLoginPage(false);
   };
 
-  const handleGetStarted = (packageId?: number) => {
+  const handleOpenCheckout = (
+    mode: CheckoutMode,
+    packageId?: number,
+  ) => {
     if (packageId) {
       setSelectedPackageId(packageId);
     }
+
+    setCheckoutMode(mode);
     setShowCheckout(true);
+  };
+
+  const handleGetStarted = (packageId?: number) => {
+    handleOpenCheckout("standard", packageId);
+  };
+
+  const handleStartFreeTrial = (packageId?: number) => {
+    if (isLoadingPublicSettings) {
+      toast.error("Free trial is still loading. Please try again in a moment.");
+      return;
+    }
+
+    if (!publicSettings?.free_trial_coupon_code?.trim()) {
+      toast.error("Free trial is not configured right now.");
+      return;
+    }
+
+    handleOpenCheckout("free_trial", packageId);
   };
 
   const handleCheckoutComplete = () => {
     setIsAuthenticated(true);
     setShowCheckout(false);
+    setCheckoutMode("standard");
+  };
+
+  const handleCheckoutBack = () => {
+    setShowCheckout(false);
+    setCheckoutMode("standard");
+
+    if (getStoredAuthToken()) {
+      setIsAuthenticated(true);
+      setShowLoginPage(false);
+    }
+  };
+
+  const handleOpenLegalPage = (type: LegalPageType) => {
+    setIsVideoModalOpen(false);
+    setIsMobileMenuOpen(false);
+    setLegalPageType(type);
+    window.history.pushState({}, "", getLegalPagePath(type));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleCloseLegalPage = () => {
+    setLegalPageType(null);
+    window.history.pushState({}, "", "/");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const handleOpenVideoModal = () => {
@@ -349,6 +455,28 @@ export default function App() {
       }}
     />
   );
+
+  if (legalPageType) {
+    return (
+      <>
+        <LegalPage
+          type={legalPageType}
+          settings={publicSettings}
+          isLoadingContent={isLoadingPublicSettings}
+          onBack={handleCloseLegalPage}
+          onOpenLogin={() => {
+            handleCloseLegalPage();
+            if (!isAuthenticated) {
+              setShowLoginPage(true);
+            }
+          }}
+          onOpenTerms={() => handleOpenLegalPage("terms")}
+          onOpenPrivacy={() => handleOpenLegalPage("privacy")}
+        />
+        {toastUi}
+      </>
+    );
+  }
 
   if (isCheckingAuth) {
     return (
@@ -383,8 +511,12 @@ export default function App() {
           packages={pricingPlans}
           defaultPackageId={checkoutDefaultPackageId}
           currentPackageId={null}
-          onBack={() => setShowCheckout(false)}
+          mode={checkoutMode}
+          freeTrialCouponCode={publicSettings?.free_trial_coupon_code || ""}
+          onBack={handleCheckoutBack}
           onComplete={handleCheckoutComplete}
+          onOpenTerms={() => handleOpenLegalPage("terms")}
+          onOpenPrivacy={() => handleOpenLegalPage("privacy")}
         />
         {toastUi}
       </>
@@ -397,6 +529,8 @@ export default function App() {
         <LoginPage
           onBack={() => setShowLoginPage(false)}
           onLoginSuccess={handleLoginSuccess}
+          onOpenTerms={() => handleOpenLegalPage("terms")}
+          onOpenPrivacy={() => handleOpenLegalPage("privacy")}
         />
         {toastUi}
       </>
@@ -631,7 +765,7 @@ export default function App() {
             <button
               onClick={() => {
                 setIsMobileMenuOpen(false);
-                handleGetStarted();
+                handleStartFreeTrial();
               }}
               className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-semibold text-center shadow-md hover:shadow-lg disabled:bg-slate-300"
               disabled={pricingPlans.length === 0}
@@ -664,7 +798,7 @@ export default function App() {
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <button
-              onClick={() => handleGetStarted()}
+              onClick={() => handleStartFreeTrial()}
               disabled={pricingPlans.length === 0}
               className="px-8 py-3 text-lg font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-lg hover:shadow-xl disabled:bg-slate-400"
             >
@@ -837,7 +971,7 @@ export default function App() {
             Join thousands of businesses already using Nealika POS
           </p>
           <button
-            onClick={() => handleGetStarted()}
+            onClick={() => handleStartFreeTrial()}
             disabled={pricingPlans.length === 0}
             className="px-8 py-4 text-lg font-semibold text-blue-600 bg-white rounded-lg hover:bg-blue-50 transition-colors shadow-lg hover:shadow-xl disabled:bg-slate-200"
           >
@@ -849,7 +983,11 @@ export default function App() {
         </div>
       </section>
 
-      <Footer settings={publicSettings} />
+      <Footer
+        settings={publicSettings}
+        onOpenTerms={() => handleOpenLegalPage("terms")}
+        onOpenPrivacy={() => handleOpenLegalPage("privacy")}
+      />
 
         {isVideoModalOpen && demoVideoSource && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">

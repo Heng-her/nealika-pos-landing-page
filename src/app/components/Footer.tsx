@@ -8,37 +8,19 @@ import upiLogo from "@/imports/UPI.png";
 import jcbLogo from "@/imports/JCB-1.png";
 import alipayLogo from "@/imports/Alipay.png";
 import wechatLogo from "@/imports/WeChat.png";
+import type { PublicSiteSettings } from "../services/posApi";
 
 export interface FooterProps {
-  settings?: {
-    contact_name?: string;
-    contact_phone?: string;
-    contact_email?: string;
-    contact_address?: string;
-    contact?: {
-      name?: string;
-      phone?: string;
-      email?: string;
-      address?: string;
-      social_links?: {
-        facebook?: string;
-        instagram?: string;
-        linkedin?: string;
-        youtube?: string;
-        telegram?: string;
-      };
-    };
-    social_links?: {
-      facebook?: string;
-      instagram?: string;
-      linkedin?: string;
-      youtube?: string;
-      telegram?: string;
-    };
-  } | null;
+  settings?: PublicSiteSettings | null;
+  onOpenTerms?: () => void;
+  onOpenPrivacy?: () => void;
 }
 
-export default function Footer({ settings }: FooterProps = {}) {
+export default function Footer({
+  settings,
+  onOpenTerms,
+  onOpenPrivacy,
+}: FooterProps = {}) {
   const contact = settings?.contact;
   const address =
     settings?.contact_address ||
@@ -376,13 +358,21 @@ export default function Footer({ settings }: FooterProps = {}) {
                 Powered by Nealika Co.,LTD
               </p>
               <div className="flex items-center gap-2 text-sm">
-                <a href="#" className="text-blue-600 hover:underline">
-                  Terms & Condition
-                </a>
+                <button
+                  type="button"
+                  onClick={onOpenTerms}
+                  className="text-blue-600 hover:underline"
+                >
+                  Terms of Service
+                </button>
                 <span className="text-slate-400">-</span>
-                <a href="#" className="text-blue-600 hover:underline">
+                <button
+                  type="button"
+                  onClick={onOpenPrivacy}
+                  className="text-blue-600 hover:underline"
+                >
                   Privacy Policy
-                </a>
+                </button>
               </div>
             </div>
 

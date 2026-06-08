@@ -23,6 +23,8 @@ import {
 interface LoginPageProps {
   onBack: () => void;
   onLoginSuccess: () => void;
+  onOpenTerms: () => void;
+  onOpenPrivacy: () => void;
 }
 
 const OTP_RESEND_SECONDS = 60;
@@ -36,6 +38,8 @@ function formatCountdown(seconds: number) {
 export default function LoginPage({
   onBack,
   onLoginSuccess,
+  onOpenTerms,
+  onOpenPrivacy,
 }: LoginPageProps) {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [otp, setOtp] = useState("");
@@ -280,13 +284,21 @@ export default function LoginPage({
 
           <p className="text-xs text-slate-500 text-center mt-6">
             By continuing, you agree to our{" "}
-            <a href="#" className="text-blue-600 hover:underline">
+            <button
+              type="button"
+              onClick={onOpenTerms}
+              className="text-blue-600 hover:underline"
+            >
               Terms of Service
-            </a>{" "}
+            </button>{" "}
             and{" "}
-            <a href="#" className="text-blue-600 hover:underline">
+            <button
+              type="button"
+              onClick={onOpenPrivacy}
+              className="text-blue-600 hover:underline"
+            >
               Privacy Policy
-            </a>
+            </button>
           </p>
         </div>
       </div>

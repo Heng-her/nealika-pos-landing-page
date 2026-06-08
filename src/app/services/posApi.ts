@@ -112,6 +112,38 @@ export interface UpdateProfilePayload {
 
 export interface PublicSiteSettings {
   pos_demo_video_url?: string;
+  free_trial_coupon_code?: string;
+  terms_of_service_content?: string;
+  terms_of_service_updated_at?: string;
+  privacy_policy_content?: string;
+  privacy_policy_updated_at?: string;
+  contact_name?: string;
+  contact_phone?: string;
+  contact_email?: string;
+  contact_address?: string;
+  contact?: {
+    name?: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    social_links?: {
+      facebook?: string;
+      instagram?: string;
+      linkedin?: string;
+      youtube?: string;
+      telegram?: string;
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+  social_links?: {
+    facebook?: string;
+    instagram?: string;
+    linkedin?: string;
+    youtube?: string;
+    telegram?: string;
+    [key: string]: unknown;
+  };
   [key: string]: unknown;
 }
 
@@ -126,6 +158,18 @@ export interface CurrentSubscription {
   status?: string;
   auto_renew?: boolean | number;
   next_billing_date?: string | null;
+  [key: string]: unknown;
+}
+
+export interface SubscriptionReminderStatus {
+  should_remind?: boolean;
+  days_left?: number | null;
+  channels?: {
+    email?: boolean;
+    sms?: boolean;
+    telegram?: boolean;
+    [key: string]: unknown;
+  } | null;
   [key: string]: unknown;
 }
 
@@ -634,25 +678,52 @@ function extractPublicSiteSettings(data: unknown): PublicSiteSettings {
     isRecord(data.settings) ? data.settings : null,
     isRecord(data.config) ? data.config : null,
   ].filter(Boolean) as Record<string, unknown>[];
+  const mergedRecord = candidateRecords.reduce<Record<string, unknown>>(
+    (accumulator, record) => ({
+      ...accumulator,
+      ...record,
+    }),
+    {},
+  );
 
-  for (const record of candidateRecords) {
-    const posDemoVideoUrl = getFirstStringValue(record, [
+  return {
+    ...mergedRecord,
+    pos_demo_video_url: getFirstStringValue(mergedRecord, [
       "pos_demo_video_url",
       "demo_video_url",
       "watch_demo_url",
       "video_demo_url",
       "video_url",
-    ]);
-
-    if (posDemoVideoUrl) {
-      return {
-        ...record,
-        pos_demo_video_url: posDemoVideoUrl,
-      };
-    }
-  }
-
-  return {};
+    ]),
+    free_trial_coupon_code: getFirstStringValue(mergedRecord, [
+      "free_trial_coupon_code",
+      "start_free_trial_coupon_code",
+      "trial_coupon_code",
+      "free_coupon_code",
+    ]),
+    terms_of_service_content: getFirstStringValue(mergedRecord, [
+      "terms_of_service_content",
+      "terms_content",
+      "terms_conditions_content",
+      "terms_and_conditions_content",
+    ]),
+    terms_of_service_updated_at: getFirstStringValue(mergedRecord, [
+      "terms_of_service_updated_at",
+      "terms_updated_at",
+      "terms_last_updated",
+      "terms_of_service_last_updated",
+    ]),
+    privacy_policy_content: getFirstStringValue(mergedRecord, [
+      "privacy_policy_content",
+      "privacy_content",
+    ]),
+    privacy_policy_updated_at: getFirstStringValue(mergedRecord, [
+      "privacy_policy_updated_at",
+      "privacy_updated_at",
+      "privacy_last_updated",
+      "privacy_policy_last_updated",
+    ]),
+  };
 }
 
 export function getStoredAuthToken() {
@@ -1074,6 +1145,66 @@ export async function getCurrentSubscription() {
   });
 }
 
+export async function unsubscribeCurrentSubscription(subscriptionId?: number) {
+  const token = getStoredAuthToken();
+  const requestBody: Record<string, number> = {
+    auto_renew: 0,
+  };
+
+  if (subscriptionId) {
+    requestBody.subscription_id = subscriptionId;
+  }
+  const response = await fetch(buildUrl("/subscriptions/unsubscribe"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      token: token || "",
+    },
+    body: JSON.stringify(requestBody),
+  });
+  const payload = await readResponseBody(response);
+
+  if (response.status === 401) {
+    throw createUnauthorizedError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Unauthorized",
+      payload,
+    );
+  }
+
+  if (!response.ok) {
+    throw createApiError("Failed to update subscription", response, payload);
+  }
+
+  if (!isRecord(payload) || payload.code !== 1) {
+    if (isRecord(payload) && payload.code === 401) {
+      throw createUnauthorizedError(
+        typeof payload.msg === "string" ? payload.msg : "Unauthorized",
+        payload,
+      );
+    }
+
+    throw new ApiError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Failed to update subscription",
+      isRecord(payload) && typeof payload.code === "number"
+        ? payload.code
+        : response.status || 500,
+      isRecord(payload) && "data" in payload ? payload.data : payload,
+    );
+  }
+
+  return payload.data;
+}
+
+export async function getSubscriptionReminderStatus() {
+  return apiRequest<SubscriptionReminderStatus>("/subscriptions/reminder-status", {
+    requiresAuth: true,
+  });
+}
+
 export async function getCheckoutQuote(payload: {
   package_id: number;
   duration_id: number;
@@ -1089,7 +1220,7 @@ export async function createPaywayPayment(payload: {
   package_id: number;
   duration_id: number;
   coupon_code?: string;
-  payment_method: "khqr" | "card";
+  payment_method?: "khqr" | "card";
 }) {
   return apiRequest<PaywayCreateResponse>("/payments/paywaycreate", {
     method: "POST",

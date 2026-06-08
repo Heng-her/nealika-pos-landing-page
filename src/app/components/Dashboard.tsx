@@ -23,10 +23,13 @@ import {
   getErrorMessage,
   getPackages,
   getProfile,
+  getSubscriptionReminderStatus,
   isUnauthorizedError,
   logout,
   mapPackageToDisplayPackage,
   normalizeProfileAvatarUrl,
+  unsubscribeCurrentSubscription,
+  type SubscriptionReminderStatus,
   uploadProfileAvatar,
   updateProfile,
   type CurrentSubscription,
@@ -37,6 +40,8 @@ import {
 interface DashboardProps {
   onLogout: (options?: { redirectToLogin?: boolean }) => void;
 }
+
+const SUBSCRIPTION_EXPIRY_REMINDER_DAYS = 7;
 
 function toProfileForm(profile?: UserProfile | null): ProfileFormState {
   const avatarUrl = normalizeProfileAvatarUrl(profile?.avatar);
@@ -85,6 +90,47 @@ function formatDurationLabel(months?: number) {
   return `${months} months`;
 }
 
+function isAutoRenewEnabled(value?: boolean | number | null) {
+  return value === true || Number(value || 0) === 1;
+}
+
+function getDaysUntilDate(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const targetDate = new Date(value);
+  if (Number.isNaN(targetDate.getTime())) {
+    return null;
+  }
+
+  return Math.ceil(
+    (targetDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+  );
+}
+
+function getReminderChannelLabels(status?: SubscriptionReminderStatus | null) {
+  if (!status?.channels) {
+    return [];
+  }
+
+  const labels: string[] = [];
+
+  if (status.channels.sms) {
+    labels.push("mobile");
+  }
+
+  if (status.channels.email) {
+    labels.push("email");
+  }
+
+  if (status.channels.telegram) {
+    labels.push("Telegram");
+  }
+
+  return labels;
+}
+
 export default function Dashboard({ onLogout }: DashboardProps) {
   const [activeTab, setActiveTab] = useState<
     "profile" | "services" | "payments" | "access"
@@ -112,8 +158,67 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   const [paymentsRefreshKey, setPaymentsRefreshKey] = useState(0);
   const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [isUnsubscribeDialogOpen, setIsUnsubscribeDialogOpen] = useState(false);
+  const [isUpdatingSubscription, setIsUpdatingSubscription] = useState(false);
+  const [isExpiryReminderDialogOpen, setIsExpiryReminderDialogOpen] =
+    useState(false);
+  const [hasEvaluatedExpiryReminder, setHasEvaluatedExpiryReminder] =
+    useState(false);
+  const [reminderStatus, setReminderStatus] =
+    useState<SubscriptionReminderStatus | null>(null);
 
   const subscribedPackageId = currentSubscription?.package_id || null;
+  const currentSubscriptionPackage = useMemo(() => {
+    return (
+      services.find((service) => service.id === subscribedPackageId) || null
+    );
+  }, [services, subscribedPackageId]);
+  const fallbackExpiryReminder = useMemo(() => {
+    if (!currentSubscription || isAutoRenewEnabled(currentSubscription.auto_renew)) {
+      return null;
+    }
+
+    const daysRemaining = getDaysUntilDate(currentSubscription.expire_date);
+    if (
+      daysRemaining === null ||
+      daysRemaining < 0 ||
+      daysRemaining > SUBSCRIPTION_EXPIRY_REMINDER_DAYS
+    ) {
+      return null;
+    }
+
+    return {
+      daysRemaining,
+      packageName:
+        currentSubscription.package_name ||
+        currentSubscriptionPackage?.name ||
+        "your current plan",
+      expiryDateLabel: formatDateValue(currentSubscription.expire_date),
+      channels: [] as string[],
+    };
+  }, [currentSubscription, currentSubscriptionPackage]);
+  const expiryReminder = useMemo(() => {
+    if (reminderStatus?.should_remind) {
+      return {
+        daysRemaining:
+          typeof reminderStatus.days_left === "number"
+            ? reminderStatus.days_left
+            : getDaysUntilDate(currentSubscription?.expire_date) || 0,
+        packageName:
+          currentSubscription?.package_name ||
+          currentSubscriptionPackage?.name ||
+          "your current plan",
+        expiryDateLabel: formatDateValue(currentSubscription?.expire_date),
+        channels: getReminderChannelLabels(reminderStatus),
+      };
+    }
+
+    if (reminderStatus && reminderStatus.should_remind === false) {
+      return null;
+    }
+
+    return fallbackExpiryReminder;
+  }, [currentSubscription, currentSubscriptionPackage, fallbackExpiryReminder, reminderStatus]);
 
   const accessInfo = useMemo(() => {
     return {
@@ -133,6 +238,27 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   };
 
   useEffect(() => {
+    if (
+      isLoadingSubscription ||
+      isLoadingPackages ||
+      hasEvaluatedExpiryReminder
+    ) {
+      return;
+    }
+
+    setHasEvaluatedExpiryReminder(true);
+
+    if (expiryReminder) {
+      setIsExpiryReminderDialogOpen(true);
+    }
+  }, [
+    expiryReminder,
+    hasEvaluatedExpiryReminder,
+    isLoadingPackages,
+    isLoadingSubscription,
+  ]);
+
+  useEffect(() => {
     let isMounted = true;
 
     const loadDashboardData = async () => {
@@ -143,18 +269,19 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       setSubscriptionError("");
       setProfileError("");
 
-      const [packagesResult, profileResult, subscriptionResult] =
+      const [packagesResult, profileResult, subscriptionResult, reminderStatusResult] =
         await Promise.allSettled([
           getPackages(),
           getProfile(),
           getCurrentSubscription(),
+          getSubscriptionReminderStatus(),
         ]);
 
       if (!isMounted) {
         return;
       }
 
-      const unauthorizedResult = [profileResult, subscriptionResult].find(
+      const unauthorizedResult = [profileResult, subscriptionResult, reminderStatusResult].find(
         (result): result is PromiseRejectedResult =>
           result.status === "rejected" && isUnauthorizedError(result.reason),
       );
@@ -189,6 +316,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         toast.error(message);
       }
 
+      if (reminderStatusResult.status === "fulfilled") {
+        setReminderStatus(reminderStatusResult.value);
+      } else {
+        setReminderStatus(null);
+      }
+
       setIsLoadingPackages(false);
       setIsLoadingSubscription(false);
       setIsLoadingProfile(false);
@@ -210,12 +343,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     }
   };
 
-  const handleUnsubscribe = () => {
-    alert(
-      "Subscription cancellation is not connected in the current backend yet.",
-    );
-  };
-
   const handleUpgrade = (newPackageId: number) => {
     const selectedPackage = services.find(
       (service) => service.id === newPackageId,
@@ -223,6 +350,10 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     if (selectedPackage) {
       setCheckoutPackage(selectedPackage);
     }
+  };
+
+  const handleUnsubscribe = () => {
+    setIsUnsubscribeDialogOpen(true);
   };
 
   const refreshDashboardData = async () => {
@@ -240,6 +371,19 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       setServices(packages.map(mapPackageToDisplayPackage));
       syncProfileState(latestProfile);
       setCurrentSubscription(subscription);
+
+      try {
+        const latestReminderStatus = await getSubscriptionReminderStatus();
+        setReminderStatus(latestReminderStatus);
+      } catch (reminderError) {
+        if (isUnauthorizedError(reminderError)) {
+          toast.error(getErrorMessage(reminderError));
+          onLogout({ redirectToLogin: true });
+          return;
+        }
+
+        setReminderStatus(null);
+      }
     } catch (error) {
       if (isUnauthorizedError(error)) {
         toast.error(getErrorMessage(error));
@@ -261,6 +405,54 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     setActiveTab("services");
     setPaymentsRefreshKey((currentValue) => currentValue + 1);
     await refreshDashboardData();
+  };
+
+  const handleConfirmUnsubscribe = async () => {
+    if (!currentSubscription) {
+      setIsUnsubscribeDialogOpen(false);
+      return;
+    }
+
+    setIsUpdatingSubscription(true);
+    setSubscriptionError("");
+
+    try {
+      await unsubscribeCurrentSubscription(currentSubscription.id);
+      setCurrentSubscription((currentValue) =>
+        currentValue
+          ? {
+              ...currentValue,
+              auto_renew: false,
+            }
+          : currentValue,
+      );
+      setIsUnsubscribeDialogOpen(false);
+      toast.success("Auto-renew has been turned off.");
+      await refreshDashboardData();
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        toast.error(getErrorMessage(error));
+        onLogout({ redirectToLogin: true });
+        return;
+      }
+
+      const message = getErrorMessage(error);
+      setSubscriptionError(message);
+      toast.error(message);
+    } finally {
+      setIsUpdatingSubscription(false);
+    }
+  };
+
+  const handleContinuePlanFromReminder = () => {
+    setIsExpiryReminderDialogOpen(false);
+
+    if (currentSubscriptionPackage) {
+      setCheckoutPackage(currentSubscriptionPackage);
+      return;
+    }
+
+    setActiveTab("services");
   };
 
   const handleUpdateProfile = async (
@@ -342,8 +534,16 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         packages={services}
         defaultPackageId={checkoutPackage.id}
         currentPackageId={subscribedPackageId}
+        mode="standard"
+        freeTrialCouponCode=""
         onBack={() => setCheckoutPackage(null)}
         onComplete={handleCheckoutComplete}
+        onOpenTerms={() =>
+          window.open("/terms-of-service", "_blank", "noopener,noreferrer")
+        }
+        onOpenPrivacy={() =>
+          window.open("/privacy-policy", "_blank", "noopener,noreferrer")
+        }
       />
     );
   }
@@ -451,6 +651,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                 setSelectedServiceDetail={setSelectedServiceDetail}
                 isLoadingPackages={isLoadingPackages}
                 isLoadingSubscription={isLoadingSubscription}
+                isUpdatingSubscription={isUpdatingSubscription}
                 packagesError={packagesError}
                 subscriptionError={subscriptionError}
                 onSubscribe={handleSubscribe}
@@ -465,6 +666,60 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           </div>
         </div>
       </div>
+
+      <AlertDialog
+        open={isExpiryReminderDialogOpen}
+        onOpenChange={setIsExpiryReminderDialogOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Subscription Expiring Soon</AlertDialogTitle>
+            <AlertDialogDescription>
+              {expiryReminder
+                ? `Your ${expiryReminder.packageName} plan expires in ${expiryReminder.daysRemaining} day${expiryReminder.daysRemaining === 1 ? "" : "s"} on ${expiryReminder.expiryDateLabel}. Continue your plan now to avoid interruption.${expiryReminder.channels.length ? ` We will also remind you by ${expiryReminder.channels.join(", ")}.` : ""}`
+                : "Your subscription expires soon. Continue your plan now to avoid interruption."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Close</AlertDialogCancel>
+            <AlertDialogAction onClick={handleContinuePlanFromReminder}>
+              Continue Plan
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={isUnsubscribeDialogOpen}
+        onOpenChange={(open) => {
+          if (!isUpdatingSubscription) {
+            setIsUnsubscribeDialogOpen(open);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unsubscribe</AlertDialogTitle>
+            <AlertDialogDescription>
+              Turn off auto-renew for your current package? Your subscription
+              will stay active until{" "}
+              {formatDateValue(currentSubscription?.expire_date)}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isUpdatingSubscription}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmUnsubscribe}
+              disabled={isUpdatingSubscription}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isUpdatingSubscription ? "Updating..." : "Yes, unsubscribe"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={isLogoutDialogOpen}
