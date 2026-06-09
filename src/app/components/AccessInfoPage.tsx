@@ -44,12 +44,15 @@ export default function AccessInfoPage({
   const [showPassword, setShowPassword] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  const isLocked = accessInfo?.locked !== false || !accessInfo?.has_subscription;
+  const isLocked =
+    accessInfo?.locked !== false || !accessInfo?.has_subscription;
   const access = accessInfo?.access;
   const hasPassword = Boolean(access?.password);
   const hasEmail = Boolean(access?.email);
   const isExpired = accessInfo?.reason === "expired";
-  const lockTitle = isExpired ? "POS Access is disabled" : "POS Access is locked";
+  const lockTitle = isExpired
+    ? "POS Access is disabled"
+    : "POS Access is locked";
   const lockMessage = isExpired
     ? EXPIRED_ACCESS_MESSAGE
     : accessInfo?.message?.trim() || LOCKED_ACCESS_MESSAGE;
@@ -156,7 +159,9 @@ export default function AccessInfoPage({
               </h3>
               <p className="mt-2 text-slate-700">{lockMessage}</p>
               {lockDetailMessage ? (
-                <p className="mt-3 text-sm text-amber-800">{lockDetailMessage}</p>
+                <p className="mt-3 text-sm text-amber-800">
+                  {lockDetailMessage}
+                </p>
               ) : null}
               <button
                 onClick={onViewPackages}
@@ -170,10 +175,10 @@ export default function AccessInfoPage({
         </div>
       ) : (
         <>
-          <div className="mb-4 flex items-center gap-2 rounded-full bg-green-50 px-3 py-2 text-sm font-medium text-green-700 w-fit border border-green-200">
+          {/* <div className="mb-4 flex items-center gap-2 rounded-full bg-green-50 px-3 py-2 text-sm font-medium text-green-700 w-fit border border-green-200">
             <Check className="w-4 h-4" />
             Your POS access is unlocked
-          </div>
+          </div> */}
 
           <div className="space-y-4">
             <div className="border border-slate-200 rounded-lg p-4">
@@ -181,25 +186,25 @@ export default function AccessInfoPage({
                 <label className="text-sm font-medium text-slate-500">
                   POS URL
                 </label>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    onClick={onOpenPos}
-                    type="button"
-                    disabled={isOpeningPos}
-                    className={primaryActionClassName}
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    {isOpeningPos ? "Opening POS..." : "Open POS"}
-                  </button>
-                  {renderCopyButton(access?.pos_url || "", "url")}
-                </div>
+                {renderCopyButton(access?.pos_url || "", "url")}
               </div>
-              <input
+              <div className="flex flex-row gap-3">
+                <input
                 type="text"
                 value={access?.pos_url || ""}
                 readOnly
                 className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono text-sm"
               />
+              <button
+                onClick={onOpenPos}
+                type="button"
+                disabled={isOpeningPos}
+                className={primaryActionClassName}
+              >
+                <ExternalLink className="w-4 h-4" />
+                {isOpeningPos ? "Opening POS..." : "Open"}
+              </button>
+              </div>
             </div>
 
             <div className="border border-slate-200 rounded-lg p-4">
@@ -252,7 +257,9 @@ export default function AccessInfoPage({
                     type="button"
                     disabled={isRevealingPassword}
                     className="absolute inset-y-0 right-3 inline-flex items-center justify-center text-slate-500 hover:text-slate-800 transition-colors disabled:cursor-not-allowed disabled:text-slate-400"
-                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    aria-label={
+                      showPassword ? "Hide password" : "Show password"
+                    }
                   >
                     {isRevealingPassword ? (
                       <RefreshCw className="w-4 h-4 animate-spin" />
@@ -286,14 +293,14 @@ export default function AccessInfoPage({
         </>
       )}
 
-      <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
         <div className="flex gap-3">
-          <div className="mt-0.5 text-slate-500">
+          <div className="mt-0.5 text-amber-600">
             <AlertTriangle className="w-5 h-5" />
           </div>
           <div>
-            <p className="font-medium text-slate-900 mb-1">Security Notice</p>
-            <p className="text-sm text-slate-600">
+            <p className="font-medium text-amber-900 mb-1">Security Notice</p>
+            <p className="text-sm text-amber-700">
               Open POS from this page to create a fresh one-time login ticket.
               This is more secure than bookmarking an old direct login URL.
             </p>

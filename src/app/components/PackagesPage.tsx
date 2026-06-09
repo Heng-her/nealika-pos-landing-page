@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { Check, ArrowLeft } from "lucide-react";
 import { type DisplayPackage, type CurrentSubscription } from "../services/posApi";
 import { Switch } from "./ui/switch";
 
@@ -346,9 +346,9 @@ export default function PackagesPage({
         <div className="bg-white rounded-xl shadow-sm p-6">
           <button
             onClick={() => setSelectedServiceDetail(null)}
-            className="flex items-center gap-2 text-slate-600 hover:text-slate-900 mb-6 transition-colors font-medium"
+            className="flex items-center gap-2 text-slate-600 hover:text-slate-900 mb-6 transition-colors font-medium cursor-pointer"
           >
-            {"<-"} Back to Packages
+            <ArrowLeft className="w-4 h-4" /> Back
           </button>
 
           <div className="mb-6">
