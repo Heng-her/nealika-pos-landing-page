@@ -1,17 +1,25 @@
 import { Check } from "lucide-react";
-import { type DisplayPackage, type CurrentSubscription } from "../services/posApi";
+import {
+  type DisplayPackage,
+  type CurrentSubscription,
+} from "../services/posApi";
+import { Switch } from "./ui/switch";
 
 interface PackagesPageProps {
   services: DisplayPackage[];
   subscribedPackageId: number | null;
   currentSubscription: CurrentSubscription | null;
+  isReminderAlertEnabled: boolean;
+  showReminderAlertSection: boolean;
   selectedServiceDetail: DisplayPackage | null;
   setSelectedServiceDetail: (val: DisplayPackage | null) => void;
   isLoadingPackages: boolean;
   isLoadingSubscription: boolean;
+  isUpdatingSubscription: boolean;
   packagesError: string;
   subscriptionError: string;
   onSubscribe: (packageId: number) => void;
+  onToggleReminderAlert: (enabled: boolean) => void;
   onUnsubscribe: () => void;
   onUpgrade: (newPackageId: number) => void;
 }
@@ -45,20 +53,80 @@ function formatDurationLabel(months?: number) {
   return `${months} months`;
 }
 
+function isAutoRenewEnabled(value?: boolean | number | null) {
+  return value === true || Number(value || 0) === 1;
+}
+
 export default function PackagesPage({
   services,
   subscribedPackageId,
   currentSubscription,
+  isReminderAlertEnabled,
+  showReminderAlertSection,
   selectedServiceDetail,
   setSelectedServiceDetail,
   isLoadingPackages,
   isLoadingSubscription,
+  isUpdatingSubscription,
   packagesError,
   subscriptionError,
   onSubscribe,
+  onToggleReminderAlert,
   onUnsubscribe,
   onUpgrade,
 }: PackagesPageProps) {
+  const hasSubscribedPackage = Boolean(subscribedPackageId);
+  const isCurrentPackageAutoRenewEnabled = isAutoRenewEnabled(
+    currentSubscription?.auto_renew,
+  );
+
+  const handlePackageAction = (packageId: number) => {
+    if (packageId === subscribedPackageId) {
+      if (isCurrentPackageAutoRenewEnabled) {
+        onUnsubscribe();
+      } else {
+        onSubscribe(packageId);
+      }
+      return;
+    }
+
+    if (hasSubscribedPackage) {
+      onUpgrade(packageId);
+      return;
+    }
+
+    onSubscribe(packageId);
+  };
+
+  const getPackageActionLabel = (packageId: number) => {
+    if (packageId === subscribedPackageId) {
+      return isCurrentPackageAutoRenewEnabled ? "Unsubscribe" : "Subscribe";
+    }
+
+    if (!hasSubscribedPackage) {
+      return "Subscribe";
+    }
+
+    return packageId > (subscribedPackageId || 0) ? "Upgrade" : "Downgrade";
+  };
+
+  const getPackageActionButtonClassName = (packageId: number) => {
+    if (packageId === subscribedPackageId) {
+      return isCurrentPackageAutoRenewEnabled
+        ? "text-red-600 bg-red-50 hover:bg-red-100"
+        : "text-white bg-blue-600 hover:bg-blue-700";
+    }
+
+    if (!hasSubscribedPackage || packageId > (subscribedPackageId || 0)) {
+      return "text-white bg-blue-600 hover:bg-blue-700";
+    }
+
+    return "text-slate-600 bg-slate-100 hover:bg-slate-200";
+  };
+
+  const isUnsubscribeAction = (packageId: number) =>
+    packageId === subscribedPackageId && isCurrentPackageAutoRenewEnabled;
+
   return (
     <div className="space-y-6">
       {!selectedServiceDetail ? (
@@ -117,16 +185,62 @@ export default function PackagesPage({
                   </p>
                 </div>
               </div>
-
-              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm text-blue-900">
-                  <strong>Next billing date:</strong>{" "}
-                  {formatDateValue(
-                    currentSubscription.next_billing_date ||
-                      currentSubscription.expire_date,
-                  )}
-                </p>
+              <div
+                className={`${showReminderAlertSection ? "mt-4" : "mt-6"} p-3 bg-blue-50 border border-blue-200 rounded-lg`}
+              >
+                {isCurrentPackageAutoRenewEnabled ? (
+                  <>
+                    <p className="text-sm text-blue-900">
+                      <strong>Next billing date:</strong>{" "}
+                      {formatDateValue(
+                        currentSubscription.next_billing_date ||
+                          currentSubscription.expire_date,
+                      )}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-blue-900">
+                      <strong>Subscription ends on:</strong>{" "}
+                      {formatDateValue(currentSubscription.expire_date)}
+                    </p>
+                    <p className="mt-2 text-sm text-blue-800">
+                      Auto-renew is off. You can subscribe again anytime to
+                      extend your expiry date.
+                    </p>
+                  </>
+                )}
               </div>
+              {showReminderAlertSection ? (
+                <div className="flex flex-col gap-4 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    {/* <p className="text-base font-semibold text-slate-900">
+                      Alert Reminder
+                    </p> */}
+                    <p className="mt-1 text-sm text-slate-600">
+                      Your subscription will automatically renew on expiry date.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 self-start sm:self-center">
+                    <span
+                      className={`text-sm font-semibold ${
+                        isReminderAlertEnabled
+                          ? "text-green-600"
+                          : "text-slate-500"
+                      }`}
+                    >
+                      {isReminderAlertEnabled ? "ON" : "OFF"}
+                    </span>
+                    <Switch
+                      checked={isReminderAlertEnabled}
+                      onCheckedChange={onToggleReminderAlert}
+                      disabled={isUpdatingSubscription}
+                      className="data-[state=checked]:!bg-green-600 data-[state=unchecked]:bg-slate-300"
+                      aria-label="Toggle expiry reminder alerts"
+                    />
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="bg-white rounded-xl shadow-sm p-6">
@@ -164,9 +278,6 @@ export default function PackagesPage({
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {services.map((service) => {
                   const isSubscribed = service.id === subscribedPackageId;
-                  const canUpgrade =
-                    Boolean(subscribedPackageId) &&
-                    service.id > (subscribedPackageId || 0);
 
                   return (
                     <div
@@ -199,9 +310,7 @@ export default function PackagesPage({
                         <span className="text-3xl font-bold text-slate-900">
                           ${service.price}
                         </span>
-                        <span className="text-slate-600">
-                          {service.period}
-                        </span>
+                        <span className="text-slate-600">{service.period}</span>
                       </div>
                       <p className="text-slate-600 text-sm mb-4">
                         {service.description}
@@ -212,41 +321,18 @@ export default function PackagesPage({
                         </p>
                       </div>
                       <div className="pt-3 border-t border-slate-200">
-                        {isSubscribed ? (
-                          <button
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onUnsubscribe();
-                            }}
-                            className="w-full px-3 py-2 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors font-medium"
-                          >
-                            Unsubscribe
-                          </button>
-                        ) : subscribedPackageId ? (
-                          <button
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onUpgrade(service.id);
-                            }}
-                            className={`w-full px-3 py-2 text-sm rounded-lg transition-colors font-medium ${
-                              canUpgrade
-                                ? "text-white bg-blue-600 hover:bg-blue-700"
-                                : "text-slate-600 bg-slate-100 hover:bg-slate-200"
-                            }`}
-                          >
-                            {canUpgrade ? "Upgrade" : "Downgrade"}
-                          </button>
-                        ) : (
-                          <button
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onSubscribe(service.id);
-                            }}
-                            className="w-full px-3 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors font-medium"
-                          >
-                            Subscribe
-                          </button>
-                        )}
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handlePackageAction(service.id);
+                          }}
+                          disabled={isUpdatingSubscription}
+                          className={`w-full px-3 py-2 text-sm rounded-lg transition-colors font-medium ${getPackageActionButtonClassName(
+                            service.id,
+                          )} disabled:cursor-not-allowed disabled:opacity-60`}
+                        >
+                          {getPackageActionLabel(service.id)}
+                        </button>
                       </div>
                     </div>
                   );
@@ -261,7 +347,7 @@ export default function PackagesPage({
             onClick={() => setSelectedServiceDetail(null)}
             className="flex items-center gap-2 text-slate-600 hover:text-slate-900 mb-6 transition-colors font-medium"
           >
-            ← Back to Packages
+            {"<-"} Back to Packages
           </button>
 
           <div className="mb-6">
@@ -351,7 +437,8 @@ export default function PackagesPage({
             </div>
           </div>
 
-          {selectedServiceDetail.id === subscribedPackageId && currentSubscription ? (
+          {selectedServiceDetail.id === subscribedPackageId &&
+          currentSubscription ? (
             <div className="border-t pt-6 mt-6">
               <h3 className="text-xl font-bold text-slate-900 mb-4">
                 Subscription Details
@@ -387,46 +474,54 @@ export default function PackagesPage({
                     {currentSubscription.auto_renew ? "Enabled" : "Disabled"}
                   </p>
                 </div>
+                {showReminderAlertSection ? (
+                  <div>
+                    <p className="text-sm font-medium text-slate-500">
+                      Alert Reminder
+                    </p>
+                    <p className="text-slate-900 mt-1">
+                      {isReminderAlertEnabled ? "Enabled" : "Disabled"}
+                    </p>
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : null}
 
           <div className="mt-8">
-            {selectedServiceDetail.id === subscribedPackageId ? (
-              <button
-                onClick={() => {
-                  onUnsubscribe();
+            <button
+              onClick={() => {
+                handlePackageAction(selectedServiceDetail.id);
+                if (!isUnsubscribeAction(selectedServiceDetail.id)) {
                   setSelectedServiceDetail(null);
-                }}
-                className="w-full px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold"
-              >
-                Unsubscribe from this Package
-              </button>
-            ) : (
-              <button
-                onClick={() => {
-                  onUpgrade(selectedServiceDetail.id);
-                  setSelectedServiceDetail(null);
-                }}
-                className={`w-full px-6 py-3 text-white rounded-lg transition-colors font-semibold ${
-                  subscribedPackageId &&
-                  selectedServiceDetail.id > subscribedPackageId
-                    ? "bg-blue-600 hover:bg-blue-700"
-                    : subscribedPackageId &&
-                        selectedServiceDetail.id < subscribedPackageId
-                      ? "bg-slate-600 hover:bg-slate-700"
-                      : "bg-blue-600 hover:bg-blue-700"
-                }`}
-              >
-                {subscribedPackageId &&
-                selectedServiceDetail.id > subscribedPackageId
-                  ? "Upgrade to this Package"
-                  : subscribedPackageId &&
-                      selectedServiceDetail.id < subscribedPackageId
-                    ? "Downgrade to this Package"
-                    : "Subscribe to this Package"}
-              </button>
-            )}
+                }
+              }}
+              disabled={isUpdatingSubscription}
+              className={`w-full px-6 py-3 rounded-lg transition-colors font-semibold ${
+                selectedServiceDetail.id === subscribedPackageId &&
+                isCurrentPackageAutoRenewEnabled
+                  ? "bg-red-50 text-red-600 hover:bg-red-100"
+                  : selectedServiceDetail.id === subscribedPackageId
+                    ? "bg-blue-600 text-white hover:bg-blue-700"
+                    : hasSubscribedPackage &&
+                        selectedServiceDetail.id < (subscribedPackageId || 0)
+                      ? "bg-slate-600 text-white hover:bg-slate-700"
+                      : "bg-blue-600 text-white hover:bg-blue-700"
+              } disabled:cursor-not-allowed disabled:opacity-60`}
+            >
+              {selectedServiceDetail.id === subscribedPackageId &&
+              isCurrentPackageAutoRenewEnabled
+                ? "Unsubscribe from this Package"
+                : selectedServiceDetail.id === subscribedPackageId
+                  ? "Subscribe to this Package"
+                  : hasSubscribedPackage &&
+                      selectedServiceDetail.id > (subscribedPackageId || 0)
+                    ? "Upgrade to this Package"
+                    : hasSubscribedPackage &&
+                        selectedServiceDetail.id < (subscribedPackageId || 0)
+                      ? "Downgrade to this Package"
+                      : "Subscribe to this Package"}
+            </button>
           </div>
         </div>
       )}

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Check, Loader2, Lock, Send, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Check, Lock, Send, X } from "lucide-react";
+import { toast } from "sonner";
 import abaLogo from "@/imports/ABA_BANK__1_.png";
 import cardsIcon from "@/imports/cards_icons.png";
 import jcbIcon from "@/imports/JCB.png";
@@ -9,9 +10,20 @@ import unionpayIcon from "@/imports/UnionPay__1_.png";
 import visaIcon from "@/imports/Visa_Icn.png";
 import SocialAuthButtons from "./SocialAuthButtons";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
+import {
   ApiError,
   createPaywayPayment,
   getCheckoutQuote,
+  getCurrentSubscription,
   getErrorMessage,
   getPaymentStatus,
   getStoredAuthToken,
@@ -19,7 +31,6 @@ import {
   normalizePaymentStatus,
   normalizePhoneNumber,
   sendOtp,
-  submitPaywayForm,
   verifyOtp,
   type ApiSubscriptionDuration,
   type CheckoutQuote,
@@ -30,8 +41,12 @@ interface CheckoutPageProps {
   packages: DisplayPackage[];
   defaultPackageId: number;
   currentPackageId: number | null;
+  mode?: "standard" | "free_trial";
+  freeTrialCouponCode?: string;
   onBack: () => void;
   onComplete: () => void;
+  onOpenTerms: () => void;
+  onOpenPrivacy: () => void;
 }
 
 type PaymentMethod = "khqr" | "card";
@@ -46,12 +61,29 @@ type PaymentTerminalStatus =
 interface PaymentSession {
   checkoutUrl: string;
   formFields: Record<string, string | number | null | undefined>;
-  iframeName: string;
   transactionId: string;
+}
+
+const OTP_RESEND_SECONDS = 60;
+const PAYWAY_CHECKOUT_TIMEOUT_MS = 10000;
+const PAYWAY_CHECKOUT_POLL_MS = 100;
+
+declare global {
+  interface Window {
+    AbaPayway?: {
+      checkout?: () => void;
+    };
+  }
 }
 
 function toDiscountNumber(value: string) {
   return Number(value || 0);
+}
+
+function formatCountdown(seconds: number) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
 function getPaymentFailureMessage(status: PaymentTerminalStatus) {
@@ -70,13 +102,73 @@ function getPaymentFailureMessage(status: PaymentTerminalStatus) {
   return "Unable to process payment. Please retry.";
 }
 
+function getAbaPayway() {
+  if (window.AbaPayway) {
+    return window.AbaPayway;
+  }
+
+  try {
+    return window.eval('typeof AbaPayway !== "undefined" ? AbaPayway : undefined') as
+      | { checkout?: () => void }
+      | undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function waitForPayWayCheckout(isCancelled: () => boolean) {
+  return new Promise<() => void>((resolve, reject) => {
+    const startedAt = Date.now();
+
+    const check = () => {
+      if (isCancelled()) {
+        return;
+      }
+
+      const payWay = getAbaPayway();
+
+      if (payWay?.checkout) {
+        resolve(() => payWay.checkout?.());
+        return;
+      }
+
+      if (Date.now() - startedAt >= PAYWAY_CHECKOUT_TIMEOUT_MS) {
+        reject(
+          new Error(
+            "ABA PayWay checkout script did not finish loading. Please check browser shields/ad blockers and try again.",
+          ),
+        );
+        return;
+      }
+
+      window.setTimeout(check, PAYWAY_CHECKOUT_POLL_MS);
+    };
+
+    check();
+  });
+}
+
+function getPayWayScriptSrc(_checkoutUrl: string) {
+  // ABA serves the checkout plugin from the production host for both sandbox
+  // and production purchase flows. The sandbox /plugins URL returns 404.
+  return "https://checkout.payway.com.kh/plugins/checkout2-0.js";
+}
+
 export default function CheckoutPage({
   packages,
   defaultPackageId,
   currentPackageId,
+  mode = "standard",
+  freeTrialCouponCode = "",
   onBack,
   onComplete,
+  onOpenTerms,
+  onOpenPrivacy,
 }: CheckoutPageProps) {
+  const isFreeTrialFlow = mode === "free_trial";
+  const normalizedFreeTrialCouponCode = freeTrialCouponCode
+    .trim()
+    .toUpperCase();
   const [selectedPackageId, setSelectedPackageId] = useState(defaultPackageId);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("khqr");
   const [isProcessing, setIsProcessing] = useState(false);
@@ -87,8 +179,12 @@ export default function CheckoutPage({
   const [isAuthenticated, setIsAuthenticated] = useState(
     Boolean(getStoredAuthToken()),
   );
-  const [couponCode, setCouponCode] = useState("");
-  const [appliedCouponCode, setAppliedCouponCode] = useState("");
+  const [couponCode, setCouponCode] = useState(
+    isFreeTrialFlow ? normalizedFreeTrialCouponCode : "",
+  );
+  const [appliedCouponCode, setAppliedCouponCode] = useState(
+    isFreeTrialFlow ? normalizedFreeTrialCouponCode : "",
+  );
   const [couponError, setCouponError] = useState("");
   const [durationOptions, setDurationOptions] = useState<
     ApiSubscriptionDuration[]
@@ -99,7 +195,6 @@ export default function CheckoutPage({
   const [isLoadingQuote, setIsLoadingQuote] = useState(false);
   const [quoteError, setQuoteError] = useState("");
   const [paymentError, setPaymentError] = useState("");
-  const [paymentStatusMessage, setPaymentStatusMessage] = useState("");
   const [transactionId, setTransactionId] = useState("");
   const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
 
@@ -107,37 +202,44 @@ export default function CheckoutPage({
   const [otp, setOtp] = useState("");
   const [showOtpInput, setShowOtpInput] = useState(false);
   const [isLoginProcessing, setIsLoginProcessing] = useState(false);
-  const [loginError, setLoginError] = useState("");
-  const [socialError, setSocialError] = useState("");
+  const [otpCountdown, setOtpCountdown] = useState(0);
+  const [isLeaveOtpDialogOpen, setIsLeaveOtpDialogOpen] = useState(false);
 
+  const payWayFormRef = useRef<HTMLFormElement>(null);
+  const openedPayWayCheckoutKeyRef = useRef("");
   const [paymentSession, setPaymentSession] = useState<PaymentSession | null>(
     null,
   );
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [isPaywayLoading, setIsPaywayLoading] = useState(false);
-  const [hasSubmittedPaymentForm, setHasSubmittedPaymentForm] = useState(false);
-  const [hasIframeLoaded, setHasIframeLoaded] = useState(false);
-  const [paymentModalError, setPaymentModalError] = useState("");
   const [paymentResultStatus, setPaymentResultStatus] =
     useState<PaymentTerminalStatus>("idle");
-  const [showSelfRedirectFallback, setShowSelfRedirectFallback] =
-    useState(false);
-  const [showPaymentSuccessModal, setShowPaymentSuccessModal] = useState(false);
+  const [payWayScriptSrc, setPayWayScriptSrc] = useState("");
+  const [isPayWayScriptLoaded, setIsPayWayScriptLoaded] = useState(false);
 
   const selectedPackage =
     packages.find((pkg) => pkg.id === selectedPackageId) || packages[0];
+  const availableDurationOptions = useMemo(() => {
+    if (!isFreeTrialFlow) {
+      return durationOptions;
+    }
+
+    return durationOptions.filter(
+      (option) => option.months === 1 || option.months === 3,
+    );
+  }, [durationOptions, isFreeTrialFlow]);
 
   const selectedDuration = useMemo(() => {
     return (
-      durationOptions.find((option) => option.id === selectedDurationId) || null
+      availableDurationOptions.find((option) => option.id === selectedDurationId) ||
+      null
     );
-  }, [durationOptions, selectedDurationId]);
+  }, [availableDurationOptions, selectedDurationId]);
 
   const packageFeatures = selectedPackage?.features || [];
   const packagePrice = selectedPackage?.price || 0;
   const packageName = selectedPackage?.name || "Package";
 
   const hasCurrentPackage = currentPackageId !== null;
+  const isPublicCheckoutFlow = currentPackageId === null;
   const isUpgrade =
     hasCurrentPackage && selectedPackageId > (currentPackageId || 0);
   const isDowngrade =
@@ -147,10 +249,14 @@ export default function CheckoutPage({
     : isDowngrade
       ? "Downgrade"
       : "Subscribe";
-  const canRetryPayment =
-    paymentResultStatus === "failed" ||
-    paymentResultStatus === "cancelled" ||
-    paymentResultStatus === "expired";
+  const isZeroTotalCheckout = Boolean(quote) && quote.total <= 0;
+  const isFreeTrialActivation = isFreeTrialFlow && isZeroTotalCheckout;
+  const requiresFreeTrialSupport = isFreeTrialFlow && !isZeroTotalCheckout;
+  const submitButtonLabel = isFreeTrialActivation
+    ? "Activate Free Trial"
+    : isZeroTotalCheckout
+      ? `Activate ${actionType}`
+      : `Complete ${actionType}`;
 
   useEffect(() => {
     if (!packages.length) {
@@ -162,6 +268,20 @@ export default function CheckoutPage({
       setSelectedPackageId(defaultPackageId || packages[0].id);
     }
   }, [defaultPackageId, packages, selectedPackageId]);
+
+  useEffect(() => {
+    if (!isFreeTrialFlow) {
+      return;
+    }
+
+    setCouponCode(normalizedFreeTrialCouponCode);
+    setAppliedCouponCode(normalizedFreeTrialCouponCode);
+    setCouponError(
+      normalizedFreeTrialCouponCode
+        ? ""
+        : "Free trial coupon is not configured right now.",
+    );
+  }, [isFreeTrialFlow, normalizedFreeTrialCouponCode]);
 
   useEffect(() => {
     let isMounted = true;
@@ -201,6 +321,21 @@ export default function CheckoutPage({
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (availableDurationOptions.length === 0) {
+      setSelectedDurationId(null);
+      return;
+    }
+
+    const durationStillExists = availableDurationOptions.some(
+      (option) => option.id === selectedDurationId,
+    );
+
+    if (!durationStillExists) {
+      setSelectedDurationId(availableDurationOptions[0].id);
+    }
+  }, [availableDurationOptions, selectedDurationId]);
 
   const loadQuote = async (
     packageId: number,
@@ -267,64 +402,102 @@ export default function CheckoutPage({
   }, [appliedCouponCode, selectedDurationId, selectedPackage]);
 
   useEffect(() => {
-    if (
-      !paymentSession ||
-      !isPaymentModalOpen ||
-      hasSubmittedPaymentForm ||
-      paymentResultStatus !== "pending"
-    ) {
+    if (!payWayScriptSrc) {
       return;
     }
 
-    try {
-      submitPaywayForm(
-        paymentSession.checkoutUrl,
-        paymentSession.formFields,
-        paymentSession.iframeName,
-      );
-      setHasSubmittedPaymentForm(true);
-      setPaymentStatusMessage("Waiting for payment...");
-    } catch {
-      setIsPaywayLoading(false);
-      setShowSelfRedirectFallback(true);
-      setPaymentModalError("Unable to process payment. Please retry.");
-      setPaymentError("Unable to process payment. Please retry.");
+    setIsPayWayScriptLoaded(false);
+
+    const selector = `script[data-payway-checkout="${payWayScriptSrc}"]`;
+    const existingScript = document.querySelector<HTMLScriptElement>(selector);
+
+    const handleLoad = () => {
+      setIsPayWayScriptLoaded(true);
+    };
+
+    const handleError = () => {
+      setPaymentError("ABA PayWay checkout is not ready. Please try again.");
+      setIsProcessing(false);
+    };
+
+    if (existingScript) {
+      if (existingScript.dataset.loaded === "true") {
+        setIsPayWayScriptLoaded(true);
+      } else {
+        existingScript.addEventListener("load", handleLoad);
+        existingScript.addEventListener("error", handleError);
+      }
+
+      return () => {
+        existingScript.removeEventListener("load", handleLoad);
+        existingScript.removeEventListener("error", handleError);
+      };
     }
-  }, [
-    hasSubmittedPaymentForm,
-    isPaymentModalOpen,
-    paymentResultStatus,
-    paymentSession,
-  ]);
+
+    const script = document.createElement("script");
+    script.src = payWayScriptSrc;
+    script.async = true;
+    script.dataset.paywayCheckout = payWayScriptSrc;
+    script.addEventListener("load", () => {
+      script.dataset.loaded = "true";
+      handleLoad();
+    });
+    script.addEventListener("error", handleError);
+    document.body.appendChild(script);
+
+    return () => {
+      script.removeEventListener("error", handleError);
+    };
+  }, [payWayScriptSrc]);
 
   useEffect(() => {
     if (
       !paymentSession ||
-      !isPaymentModalOpen ||
-      !isPaywayLoading ||
-      hasIframeLoaded ||
+      !isPayWayScriptLoaded ||
       paymentResultStatus !== "pending"
     ) {
       return;
     }
 
-    const timeoutId = window.setTimeout(() => {
-      setIsPaywayLoading(false);
-      setShowSelfRedirectFallback(true);
-      setPaymentModalError("Unable to process payment. Please retry.");
-      setPaymentError("Unable to process payment. Please retry.");
-    }, 10000);
+    let isCancelled = false;
+    const frame = window.requestAnimationFrame(() => {
+      if (!payWayFormRef.current) {
+        setPaymentError("ABA PayWay checkout is not ready. Please try again.");
+        setIsProcessing(false);
+        return;
+      }
+
+      const checkoutKey = `${paymentSession.transactionId}:${paymentSession.checkoutUrl}`;
+      if (openedPayWayCheckoutKeyRef.current === checkoutKey) {
+        return;
+      }
+
+      waitForPayWayCheckout(() => isCancelled)
+        .then((checkout) => {
+          if (isCancelled) {
+            return;
+          }
+
+          openedPayWayCheckoutKeyRef.current = checkoutKey;
+          setPaymentError("");
+          checkout();
+          setIsProcessing(false);
+        })
+        .catch((error) => {
+          if (isCancelled) {
+            return;
+          }
+
+          setPaymentError(getErrorMessage(error));
+          setIsProcessing(false);
+        });
+    });
 
     return () => {
-      window.clearTimeout(timeoutId);
+      isCancelled = true;
+      window.cancelAnimationFrame(frame);
     };
-  }, [
-    hasIframeLoaded,
-    isPaywayLoading,
-    isPaymentModalOpen,
-    paymentResultStatus,
-    paymentSession,
-  ]);
+  }, [isPayWayScriptLoaded, paymentResultStatus, paymentSession]);
 
   useEffect(() => {
     if (!transactionId || paymentResultStatus !== "pending") {
@@ -345,28 +518,23 @@ export default function CheckoutPage({
         ) as PaymentTerminalStatus;
 
         if (normalizedStatus === "pending") {
-          setPaymentStatusMessage("Waiting for payment...");
           return;
         }
 
         setIsProcessing(false);
-        setIsPaywayLoading(false);
         setPaymentResultStatus(normalizedStatus);
 
         if (normalizedStatus === "paid") {
           setPaymentError("");
-          setPaymentModalError("");
-          setIsPaymentModalOpen(false);
-          setShowPaymentSuccessModal(true);
-          setPaymentStatusMessage("Payment successful.");
+          toast.success("Payment successful.");
+          window.setTimeout(() => {
+            void onComplete();
+          }, 1200);
           return;
         }
 
         const failureMessage = getPaymentFailureMessage(normalizedStatus);
-        setPaymentModalError(failureMessage);
         setPaymentError(failureMessage);
-        setPaymentStatusMessage("");
-        setIsPaymentModalOpen(true);
       } catch (error) {
         if (!isMounted) {
           return;
@@ -387,7 +555,25 @@ export default function CheckoutPage({
     };
   }, [paymentResultStatus, transactionId]);
 
+  useEffect(() => {
+    if (otpCountdown <= 0) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setOtpCountdown((currentValue) => currentValue - 1);
+    }, 1000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [otpCountdown]);
+
   const handleApplyCoupon = async () => {
+    if (isFreeTrialFlow) {
+      return;
+    }
+
     if (!selectedPackage || !selectedDurationId) {
       return;
     }
@@ -411,6 +597,10 @@ export default function CheckoutPage({
   };
 
   const handleRemoveCoupon = async () => {
+    if (isFreeTrialFlow) {
+      return;
+    }
+
     if (!selectedPackage || !selectedDurationId) {
       return;
     }
@@ -426,24 +616,86 @@ export default function CheckoutPage({
     }
   };
 
+  const shouldSkipPaymentForExistingSubscription = async () => {
+    if (!isPublicCheckoutFlow) {
+      return false;
+    }
+
+    try {
+      const currentSubscription = await getCurrentSubscription();
+
+      if (!currentSubscription) {
+        return false;
+      }
+
+      toast.info(
+        "You already have an active subscription. Redirecting to your dashboard.",
+      );
+      setShowLoginDialog(false);
+      setPaymentError("");
+      onBack();
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 401) {
+        setIsAuthenticated(false);
+        setShowLoginDialog(true);
+        toast.error("Please login first.");
+        return true;
+      }
+
+      setPaymentError(getErrorMessage(error));
+      return true;
+    }
+  };
+
   const processPayment = async () => {
     if (!selectedPackage || !selectedDurationId) {
       setPaymentError("Please select a package and duration first.");
       return;
     }
 
+    if (isFreeTrialFlow && !normalizedFreeTrialCouponCode) {
+      setPaymentError("Free trial coupon is not configured right now.");
+      return;
+    }
+
+    if (requiresFreeTrialSupport) {
+      setPaymentError(
+        "The free trial coupon must make the total fully free. Please contact support.",
+      );
+      return;
+    }
+
     setIsProcessing(true);
     setPaymentError("");
-    setPaymentModalError("");
-    setPaymentStatusMessage("");
 
     try {
+      const shouldSkipPayment = await shouldSkipPaymentForExistingSubscription();
+      if (shouldSkipPayment) {
+        setIsProcessing(false);
+        return;
+      }
+
       const response = await createPaywayPayment({
         package_id: selectedPackage.id,
         duration_id: selectedDurationId,
         coupon_code: appliedCouponCode,
-        payment_method: paymentMethod,
+        ...(isZeroTotalCheckout ? {} : { payment_method: paymentMethod }),
       });
+      const normalizedStatus = normalizePaymentStatus(response.status);
+
+      if (isZeroTotalCheckout && normalizedStatus === "paid") {
+        setTransactionId(response.transaction_id || "");
+        setPaymentResultStatus("paid");
+        setPaymentError("");
+        setPaymentSession(null);
+        setIsProcessing(false);
+        toast.success("Subscription activated successfully.");
+        window.setTimeout(() => {
+          void onComplete();
+        }, 800);
+        return;
+      }
 
       if (
         !response.checkout_url ||
@@ -455,24 +707,18 @@ export default function CheckoutPage({
 
       setTransactionId(response.transaction_id);
       setPaymentResultStatus("pending");
-      setPaymentStatusMessage("Waiting for payment...");
-      setShowPaymentSuccessModal(false);
-      setShowSelfRedirectFallback(false);
-      setHasSubmittedPaymentForm(false);
-      setHasIframeLoaded(false);
-      setIsPaywayLoading(true);
+      openedPayWayCheckoutKeyRef.current = "";
+      setPayWayScriptSrc(getPayWayScriptSrc(response.checkout_url));
       setPaymentSession({
         checkoutUrl: response.checkout_url,
         formFields: response.form_fields,
-        iframeName: `payway_frame_${response.transaction_id}`,
         transactionId: response.transaction_id,
       });
-      setIsPaymentModalOpen(true);
     } catch (error) {
       if (error instanceof ApiError && error.code === 401) {
         setIsAuthenticated(false);
         setShowLoginDialog(true);
-        setLoginError("Please login first.");
+        toast.error("Please login first.");
       } else {
         setPaymentError(getErrorMessage(error));
       }
@@ -489,34 +735,17 @@ export default function CheckoutPage({
     await processPayment();
   };
 
-  const handleClosePaymentModal = () => {
-    setIsPaymentModalOpen(false);
-    setIsProcessing(false);
-  };
-
-  const handleRetryPayment = async () => {
-    setPaymentModalError("");
-    setPaymentError("");
-    setPaymentStatusMessage("");
-    setPaymentResultStatus("idle");
-    setShowSelfRedirectFallback(false);
-    setHasSubmittedPaymentForm(false);
-    setHasIframeLoaded(false);
-    setIsPaymentModalOpen(false);
-    await processPayment();
-  };
-
   const handleSendOtp = async (event: React.FormEvent) => {
     event.preventDefault();
-    setLoginError("");
-    setSocialError("");
     setIsLoginProcessing(true);
 
     try {
       await sendOtp(normalizePhoneNumber(phoneNumber));
       setShowOtpInput(true);
+      setOtpCountdown(OTP_RESEND_SECONDS);
+      toast.success("OTP sent successfully.");
     } catch (error) {
-      setLoginError(getErrorMessage(error));
+      toast.error(getErrorMessage(error));
     } finally {
       setIsLoginProcessing(false);
     }
@@ -524,78 +753,77 @@ export default function CheckoutPage({
 
   const handleVerifyOtp = async (event: React.FormEvent) => {
     event.preventDefault();
-    setLoginError("");
-    setSocialError("");
     setIsLoginProcessing(true);
 
     try {
       await verifyOtp(normalizePhoneNumber(phoneNumber), otp);
+      setOtpCountdown(0);
       setIsAuthenticated(true);
       setShowLoginDialog(false);
+      toast.success("Logged in successfully.");
       await processPayment();
     } catch (error) {
-      setLoginError(getErrorMessage(error));
+      toast.error(getErrorMessage(error));
     } finally {
       setIsLoginProcessing(false);
     }
   };
 
-  const handleSocialAuthStart = () => {
-    setSocialError("");
-    setLoginError("");
-  };
+  const handleSocialAuthStart = () => {};
 
   const handleSocialAuthError = (message: string) => {
-    setSocialError(message);
-    setLoginError("");
+    toast.error(message);
   };
 
   const handleSocialAuthSuccess = async () => {
-    setSocialError("");
-    setLoginError("");
+    toast.success("Logged in successfully.");
+    setOtpCountdown(0);
     setIsAuthenticated(true);
     setShowLoginDialog(false);
     await processPayment();
   };
 
-  const handlePaymentFrameLoad = () => {
-    setHasIframeLoaded(true);
-    setIsPaywayLoading(false);
-    setShowSelfRedirectFallback(false);
-
-    if (paymentResultStatus === "pending") {
-      setPaymentModalError("");
-      setPaymentStatusMessage("Waiting for payment...");
-    }
-  };
-
-  const handlePaymentFrameError = () => {
-    setIsPaywayLoading(false);
-    setShowSelfRedirectFallback(true);
-    setPaymentModalError("Unable to process payment. Please retry.");
-    setPaymentError("Unable to process payment. Please retry.");
-  };
-
-  const handleFallbackRedirect = () => {
-    if (!paymentSession) {
+  const handleResendOtp = async () => {
+    if (otpCountdown > 0) {
       return;
     }
 
+    setIsLoginProcessing(true);
+
     try {
-      submitPaywayForm(
-        paymentSession.checkoutUrl,
-        paymentSession.formFields,
-        "_self",
-      );
-    } catch {
-      setPaymentModalError("Unable to process payment. Please retry.");
-      setPaymentError("Unable to process payment. Please retry.");
+      await sendOtp(normalizePhoneNumber(phoneNumber));
+      setOtpCountdown(OTP_RESEND_SECONDS);
+      toast.success("OTP sent successfully.");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setIsLoginProcessing(false);
     }
   };
 
-  const handlePaymentSuccessContinue = () => {
-    setShowPaymentSuccessModal(false);
-    void onComplete();
+  const resetLoginDialogOtpStep = () => {
+    setShowOtpInput(false);
+    setOtp("");
+    setOtpCountdown(0);
+  };
+
+  const closeLoginDialog = () => {
+    setShowLoginDialog(false);
+    resetLoginDialogOtpStep();
+  };
+
+  const handleLoginDialogClose = () => {
+    if (showOtpInput) {
+      setIsLeaveOtpDialogOpen(true);
+      return;
+    }
+
+    closeLoginDialog();
+  };
+
+  const handleConfirmLeaveOtp = () => {
+    setIsLeaveOtpDialogOpen(false);
+    closeLoginDialog();
   };
 
   if (!selectedPackage) {
@@ -721,13 +949,19 @@ export default function CheckoutPage({
                 Select Subscription Duration
               </h2>
               <p className="text-sm text-slate-600 mb-6">
-                Choose how long you want to subscribe. Longer durations offer
-                better savings!
+                {isFreeTrialFlow
+                  ? "Free trial supports 1 month or 3 months only. Your backend coupon is applied automatically."
+                  : "Choose how long you want to subscribe. Longer durations offer better savings!"}
               </p>
 
               {durationError ? (
                 <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
                   {durationError}
+                </div>
+              ) : isFreeTrialFlow && availableDurationOptions.length === 0 ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+                  Free trial is available only for 1 month and 3 months, but
+                  those durations are not configured right now.
                 </div>
               ) : isLoadingDurations ? (
                 <div className="grid md:grid-cols-2 gap-4">
@@ -740,7 +974,7 @@ export default function CheckoutPage({
                 </div>
               ) : (
                 <div className="grid md:grid-cols-2 gap-4">
-                  {durationOptions.map((option) => {
+                  {availableDurationOptions.map((option) => {
                     const discount = toDiscountNumber(option.discount_percent);
                     const durationPrice =
                       packagePrice * option.months * (1 - discount / 100);
@@ -799,115 +1033,132 @@ export default function CheckoutPage({
               )}
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm p-6">
-              <h2 className="text-xl font-bold text-slate-900 mb-6">
-                Payment Method
-              </h2>
+            {isFreeTrialFlow || isZeroTotalCheckout ? (
+              <div className="bg-white rounded-xl shadow-sm p-6">
+                <h2 className="text-xl font-bold text-slate-900 mb-3">
+                  No Payment Needed
+                </h2>
+                <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-green-700">
+                  No payment method is needed for this checkout. Once the total
+                  is free, your plan will activate automatically.
+                </div>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl shadow-sm p-6">
+                <h2 className="text-xl font-bold text-slate-900 mb-6">
+                  Payment Method
+                </h2>
 
-              <div className="space-y-3 mb-6">
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod("khqr")}
-                  className={`w-full p-4 border-2 rounded-xl transition-all flex items-center justify-between ${
-                    paymentMethod === "khqr"
-                      ? "border-blue-600 bg-blue-50"
-                      : "border-slate-200 hover:border-slate-300"
-                  }`}
-                >
-                  <div className="flex items-center gap-4">
-                    <img
-                      src={abaLogo}
-                      alt="ABA KHQR"
-                      className="w-16 h-16 rounded-xl"
-                    />
-                    <div className="text-left">
-                      <p className="font-semibold text-slate-900 text-lg">
-                        ABA KHQR
-                      </p>
-                      <p className="text-sm text-slate-600">
-                        Scan to pay with any banking app
-                      </p>
-                    </div>
-                  </div>
-                  <svg
-                    className={`w-6 h-6 transition-colors ${
+                <div className="space-y-3 mb-6">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod("khqr")}
+                    className={`w-full p-4 border-2 rounded-xl transition-all flex items-center justify-between ${
                       paymentMethod === "khqr"
-                        ? "text-blue-600"
-                        : "text-slate-400"
+                        ? "border-blue-600 bg-blue-50"
+                        : "border-slate-200 hover:border-slate-300"
                     }`}
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 5l7 7-7 7"
-                    />
-                  </svg>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod("card")}
-                  className={`w-full p-4 border-2 rounded-xl transition-all flex items-center justify-between ${
-                    paymentMethod === "card"
-                      ? "border-blue-600 bg-blue-50"
-                      : "border-slate-200 hover:border-slate-300"
-                  }`}
-                >
-                  <div className="flex items-center gap-4">
-                    <img
-                      src={cardsIcon}
-                      alt="Credit/Debit Card"
-                      className="w-16 h-16 rounded-xl"
-                    />
-                    <div className="text-left">
-                      <p className="font-semibold text-slate-900 text-lg">
-                        Credit/Debit Card
-                      </p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <img src={visaIcon} alt="Visa" className="h-5" />
-                        <img
-                          src={mastercardIcon}
-                          alt="Mastercard"
-                          className="h-5"
-                        />
-                        <img
-                          src={unionpayIcon}
-                          alt="UnionPay"
-                          className="h-5"
-                        />
-                        <img src={jcbIcon} alt="JCB" className="h-5" />
+                    <div className="flex items-center gap-4">
+                      <img
+                        src={abaLogo}
+                        alt="ABA KHQR"
+                        className="w-16 h-16 rounded-xl"
+                      />
+                      <div className="text-left">
+                        <p className="font-semibold text-slate-900 text-lg">
+                          ABA KHQR
+                        </p>
+                        <p className="text-sm text-slate-600">
+                          Scan to pay with any banking app
+                        </p>
                       </div>
                     </div>
-                  </div>
-                  <svg
-                    className={`w-6 h-6 transition-colors ${
+                    <svg
+                      className={`w-6 h-6 transition-colors ${
+                        paymentMethod === "khqr"
+                          ? "text-blue-600"
+                          : "text-slate-400"
+                      }`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 5l7 7-7 7"
+                      />
+                    </svg>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod("card")}
+                    className={`w-full p-4 border-2 rounded-xl transition-all flex items-center justify-between ${
                       paymentMethod === "card"
-                        ? "text-blue-600"
-                        : "text-slate-400"
+                        ? "border-blue-600 bg-blue-50"
+                        : "border-slate-200 hover:border-slate-300"
                     }`}
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 5l7 7-7 7"
-                    />
-                  </svg>
-                </button>
+                    <div className="flex items-center gap-4">
+                      <img
+                        src={cardsIcon}
+                        alt="Credit/Debit Card"
+                        className="w-16 h-16 rounded-xl"
+                      />
+                      <div className="text-left">
+                        <p className="font-semibold text-slate-900 text-lg">
+                          Credit/Debit Card
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <img src={visaIcon} alt="Visa" className="h-5" />
+                          <img
+                            src={mastercardIcon}
+                            alt="Mastercard"
+                            className="h-5"
+                          />
+                          <img
+                            src={unionpayIcon}
+                            alt="UnionPay"
+                            className="h-5"
+                          />
+                          <img src={jcbIcon} alt="JCB" className="h-5" />
+                        </div>
+                      </div>
+                    </div>
+                    <svg
+                      className={`w-6 h-6 transition-colors ${
+                        paymentMethod === "card"
+                          ? "text-blue-600"
+                          : "text-slate-400"
+                      }`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 5l7 7-7 7"
+                      />
+                    </svg>
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             <button
               onClick={handleSubmit}
               disabled={
-                isProcessing || isLoadingDurations || isLoadingQuote || !quote
+                isProcessing ||
+                isLoadingDurations ||
+                isLoadingQuote ||
+                !quote ||
+                (isFreeTrialFlow &&
+                  (!normalizedFreeTrialCouponCode || requiresFreeTrialSupport))
               }
               className="w-full px-6 py-4 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
@@ -915,33 +1166,20 @@ export default function CheckoutPage({
                 <>Processing...</>
               ) : (
                 <>
-                  <Lock className="w-5 h-5" />
-                  Complete {actionType}
+                  {isZeroTotalCheckout ? (
+                    <Check className="w-5 h-5" />
+                  ) : (
+                    <Lock className="w-5 h-5" />
+                  )}
+                  {submitButtonLabel}
                 </>
               )}
             </button>
 
-            <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
-              <Lock className="w-4 h-4" />
-              Secure payment powered by Nealika Co.,LTD.
-            </div>
-
-            {paymentStatusMessage ? (
-              <p className="text-sm text-blue-700 text-center">
-                {paymentStatusMessage}
-              </p>
-            ) : null}
-
-            {paymentResultStatus === "pending" &&
-            paymentSession &&
-            !isPaymentModalOpen ? (
-              <div className="text-center">
-                <button
-                  onClick={() => setIsPaymentModalOpen(true)}
-                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors text-sm font-medium"
-                >
-                  Reopen Payment
-                </button>
+            {!isZeroTotalCheckout ? (
+              <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
+                <Lock className="w-4 h-4" />
+                Secure payment powered by Nealika Co.,LTD.
               </div>
             ) : null}
 
@@ -989,7 +1227,23 @@ export default function CheckoutPage({
                 <h3 className="font-semibold text-slate-900 mb-3">
                   Have a Coupon?
                 </h3>
-                {!appliedCouponCode ? (
+                {isFreeTrialFlow ? (
+                  <div className="rounded-lg border border-green-200 bg-green-50 p-3">
+                    <div className="flex items-center gap-2">
+                      <Check className="w-4 h-4 text-green-600" />
+                      <span className="text-sm font-medium text-green-700">
+                        {normalizedFreeTrialCouponCode || "FREE"} applied
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs text-green-700/90">
+                      This free trial coupon is applied automatically from the
+                      backend.
+                    </p>
+                    {couponError ? (
+                      <p className="text-xs text-red-600 mt-2">{couponError}</p>
+                    ) : null}
+                  </div>
+                ) : !appliedCouponCode ? (
                   <div>
                     <div className="flex gap-2">
                       <input
@@ -1058,10 +1312,17 @@ export default function CheckoutPage({
                   {quoteError}
                 </div>
               ) : null}
+              {isFreeTrialFlow && quote && quote.total > 0 ? (
+                <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  The current free coupon does not make this checkout fully
+                  free. Please update the backend free-trial coupon or contact
+                  support.
+                </div>
+              ) : null}
 
               <div className="border-t border-slate-200 pt-4 mb-6">
                 <div className="flex items-center justify-between mb-2 text-slate-600">
-                  <span>Base Price</span>
+                  <span>Price</span>
                   <span>
                     {isLoadingQuote || !quote
                       ? "Loading..."
@@ -1071,7 +1332,7 @@ export default function CheckoutPage({
                 {quote && quote.duration_discount > 0 ? (
                   <div className="flex items-center justify-between mb-2 text-green-600">
                     <span>
-                      Duration Discount (
+                      Discount (
                       {selectedDuration
                         ? toDiscountNumber(selectedDuration.discount_percent)
                         : 0}
@@ -1112,7 +1373,9 @@ export default function CheckoutPage({
                   <span className="text-2xl font-bold text-blue-600">
                     {isLoadingQuote || !quote
                       ? "Loading..."
-                      : `$${quote.total.toFixed(2)}`}
+                      : quote.total <= 0
+                        ? "Free"
+                        : `$${quote.total.toFixed(2)}`}
                   </span>
                 </div>
                 {quote && quote.discount > 0 ? (
@@ -1127,23 +1390,57 @@ export default function CheckoutPage({
                   </div>
                 ) : null}
                 <p className="text-xs text-slate-500 mt-2">
-                  One-time payment for{" "}
-                  {(
-                    selectedDuration?.name || "selected duration"
-                  ).toLowerCase()}
+                  {isZeroTotalCheckout
+                    ? "Free access for "
+                    : "One-time payment for "}
+                  {(selectedDuration?.name || "selected duration").toLowerCase()}
                 </p>
               </div>
 
               <div className="mt-6 p-4 bg-slate-50 rounded-lg">
                 <p className="text-xs text-slate-600">
-                  By completing this purchase, you agree to our Terms of Service
-                  and Privacy Policy. You can cancel your subscription at any
-                  time.
+                  By completing this purchase, you agree to our{" "}
+                  <button
+                    type="button"
+                    onClick={onOpenTerms}
+                    className="text-blue-600 hover:underline"
+                  >
+                    Terms of Service
+                  </button>{" "}
+                  and{" "}
+                  <button
+                    type="button"
+                    onClick={onOpenPrivacy}
+                    className="text-blue-600 hover:underline"
+                  >
+                    Privacy Policy
+                  </button>
+                  . You can cancel your subscription at any time.
                 </p>
               </div>
             </div>
           </div>
         </div>
+
+        <form
+          action={paymentSession?.checkoutUrl || ""}
+          className="hidden"
+          id="aba_merchant_request"
+          method="post"
+          ref={payWayFormRef}
+          target="aba_webservice"
+        >
+          {paymentSession
+            ? Object.entries(paymentSession.formFields).map(([name, value]) => (
+                <input
+                  key={name}
+                  name={name}
+                  type="hidden"
+                  value={value == null ? "" : String(value)}
+                />
+              ))
+            : null}
+        </form>
 
         {showLoginDialog ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
@@ -1158,11 +1455,7 @@ export default function CheckoutPage({
                   </p>
                 </div>
                 <button
-                  onClick={() => {
-                    setShowLoginDialog(false);
-                    setLoginError("");
-                    setSocialError("");
-                  }}
+                  onClick={handleLoginDialogClose}
                   className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
                 >
                   <X className="w-5 h-5 text-slate-600" />
@@ -1235,6 +1528,20 @@ export default function CheckoutPage({
                       <p className="text-sm text-slate-500 mt-2">
                         Code sent to +855 {phoneNumber}
                       </p>
+                      {otpCountdown > 0 ? (
+                        <p className="text-sm text-slate-500 mt-1">
+                          Resend OTP in {formatCountdown(otpCountdown)}
+                        </p>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void handleResendOtp()}
+                          disabled={isLoginProcessing}
+                          className="mt-1 text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors disabled:text-slate-400"
+                        >
+                          {isLoginProcessing ? "Sending..." : "Resend OTP"}
+                        </button>
+                      )}
                     </div>
                     <button
                       type="submit"
@@ -1245,21 +1552,13 @@ export default function CheckoutPage({
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        setShowOtpInput(false);
-                        setOtp("");
-                        setLoginError("");
-                      }}
+                      onClick={resetLoginDialogOtpStep}
                       className="w-full px-4 py-2 text-blue-600 hover:text-blue-700 font-medium transition-colors"
                     >
                       Change Phone Number
                     </button>
                   </form>
                 )}
-
-                {loginError ? (
-                  <p className="text-sm text-red-600 mt-3">{loginError}</p>
-                ) : null}
               </div>
 
               <div className="relative my-6">
@@ -1279,145 +1578,30 @@ export default function CheckoutPage({
                 onError={handleSocialAuthError}
                 onStart={handleSocialAuthStart}
               />
-
-              {socialError ? (
-                <p className="text-sm text-amber-700 mt-4">{socialError}</p>
-              ) : null}
             </div>
           </div>
         ) : null}
 
-        {isPaymentModalOpen && paymentSession ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden">
-              <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200">
-                <div>
-                  <h3 className="text-2xl font-bold text-slate-900">
-                    ABA KHQR
-                  </h3>
-                  <p className="text-sm text-slate-600">
-                    {paymentResultStatus === "pending"
-                      ? "Waiting for payment..."
-                      : paymentResultStatus === "expired"
-                        ? "Payment expired"
-                        : paymentResultStatus === "failed"
-                          ? "Payment failed"
-                          : paymentResultStatus === "cancelled"
-                            ? "Payment cancelled"
-                            : "Payment"}
-                  </p>
-                </div>
-                <button
-                  onClick={handleClosePaymentModal}
-                  className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
-                >
-                  <X className="w-5 h-5 text-slate-600" />
-                </button>
-              </div>
-
-              <div className="p-6">
-                <div className="mb-4 flex items-center gap-3 text-sm text-slate-600">
-                  {isPaywayLoading && paymentResultStatus === "pending" ? (
-                    <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
-                  ) : null}
-                  <span>
-                    {paymentResultStatus === "paid"
-                      ? "Payment successful."
-                      : paymentModalError || "Waiting for payment..."}
-                  </span>
-                </div>
-
-                {!paymentModalError && paymentResultStatus === "pending" ? (
-                  <div className="relative h-[540px] rounded-xl border border-slate-200 overflow-hidden bg-slate-50">
-                    <iframe
-                      key={paymentSession.iframeName}
-                      name={paymentSession.iframeName}
-                      title="ABA KHQR"
-                      className="w-full h-full bg-white"
-                      onLoad={handlePaymentFrameLoad}
-                      onError={handlePaymentFrameError}
-                    />
-
-                    {isPaywayLoading ? (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white/90">
-                        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-                        <p className="text-sm text-slate-600">
-                          Loading ABA PayWay...
-                        </p>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-red-200 bg-red-50 p-6">
-                    <p className="text-red-700 font-medium">
-                      {paymentModalError ||
-                        "Unable to process payment. Please retry."}
-                    </p>
-                    <p className="text-sm text-red-600 mt-2">
-                      Transaction ID:{" "}
-                      {transactionId || paymentSession.transactionId}
-                    </p>
-                  </div>
-                )}
-
-                <div className="mt-6 flex flex-wrap items-center gap-3">
-                  {canRetryPayment && (
-                    <button
-                      onClick={() => void handleRetryPayment()}
-                      className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-                    >
-                      Retry Payment
-                    </button>
-                  )}
-
-                  {showSelfRedirectFallback &&
-                  paymentResultStatus === "pending" ? (
-                    <button
-                      onClick={handleFallbackRedirect}
-                      className="px-5 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors font-medium"
-                    >
-                      Continue In This Page
-                    </button>
-                  ) : null}
-
-                  <button
-                    onClick={handleClosePaymentModal}
-                    className="px-5 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors font-medium"
-                  >
-                    Close
-                  </button>
-                </div>
-
-                <p className="mt-4 text-xs text-slate-500">
-                  Debug reference:{" "}
-                  {transactionId || paymentSession.transactionId}
-                </p>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        {showPaymentSuccessModal ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-            <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md text-center">
-              <div className="w-16 h-16 mx-auto rounded-full bg-green-100 text-green-600 flex items-center justify-center mb-4">
-                <Check className="w-8 h-8" />
-              </div>
-              <h3 className="text-2xl font-bold text-slate-900 mb-2">
-                Payment Successful
-              </h3>
-              <p className="text-slate-600 mb-6">
-                Your subscription has been updated successfully.
-              </p>
-              <button
-                onClick={handlePaymentSuccessContinue}
-                className="w-full px-5 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-              >
-                Go to Dashboard
-              </button>
-            </div>
-          </div>
-        ) : null}
+        <AlertDialog
+          open={isLeaveOtpDialogOpen}
+          onOpenChange={setIsLeaveOtpDialogOpen}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Leave OTP Verification?</AlertDialogTitle>
+              <AlertDialogDescription>
+                You are currently verifying an OTP code. If you leave now, you
+                will need to request a new code again.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={handleConfirmLeaveOtp}>
+                Yes, leave
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );

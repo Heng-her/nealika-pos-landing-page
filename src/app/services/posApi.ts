@@ -1,5 +1,11 @@
 const DEFAULT_API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL).trim();
-const AUTH_TOKEN_KEY = "nealika_pos_token";
+const PUBLIC_SETTINGS_PATH = String(
+  import.meta.env.VITE_PUBLIC_SETTINGS_PATH || "/settings/public",
+).trim();
+const AUTH_TOKEN_KEY = "token";
+const LEGACY_AUTH_TOKEN_KEY = "nealika_pos_token";
+const USER_INFO_KEY = "userinfo";
+const PROFILE_API_DEBUG_KEY = "profile_api_debug";
 
 type RequestMethod = "GET" | "POST" | "PUT" | "DELETE";
 
@@ -47,19 +53,29 @@ export interface ApiSubscriptionDuration {
 }
 
 export interface AuthUser {
-  id: number;
+  id: number | string;
+  type?: string | null;
+  username?: string;
+  nickname?: string;
   name?: string;
   email?: string | null;
+  mobile?: string | null;
   phone?: string | null;
+  bio?: string | null;
   avatar?: string | null;
   business_name?: string | null;
   address?: string | null;
+  subscription_status?: string | null;
+  current_package?: string | null;
+  token?: string;
   [key: string]: unknown;
 }
 
 export interface VerifyOtpResponse {
   token?: string;
+  vendor?: AuthUser | null;
   user?: AuthUser | null;
+  userinfo?: AuthUser | null;
   [key: string]: unknown;
 }
 
@@ -76,18 +92,68 @@ export interface TelegramAuthPayload {
 
 export interface UserProfile {
   id?: number;
+  username?: string;
+  nickname?: string;
   name?: string;
   email?: string;
+  mobile?: string;
   phone?: string;
+  bio?: string;
   business_name?: string;
   address?: string;
   avatar?: string | null;
   [key: string]: unknown;
 }
 
+export interface UpdateProfilePayload {
+  username: string;
+  nickname?: string;
+  bio?: string;
+  avatar?: string;
+  business_name?: string;
+  address?: string;
+}
+
+export interface PublicSiteSettings {
+  pos_demo_video_url?: string;
+  free_trial_coupon_code?: string;
+  terms_of_service_content?: string;
+  terms_of_service_updated_at?: string;
+  privacy_policy_content?: string;
+  privacy_policy_updated_at?: string;
+  contact_name?: string;
+  contact_phone?: string;
+  contact_email?: string;
+  contact_address?: string;
+  contact?: {
+    name?: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    social_links?: {
+      facebook?: string;
+      instagram?: string;
+      linkedin?: string;
+      youtube?: string;
+      telegram?: string;
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+  social_links?: {
+    facebook?: string;
+    instagram?: string;
+    linkedin?: string;
+    youtube?: string;
+    telegram?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
 export interface CurrentSubscription {
   id?: number;
-  user_id?: number;
+  user_id?: number | string;
   package_id?: number;
   package_name?: string;
   duration_months?: number;
@@ -96,6 +162,41 @@ export interface CurrentSubscription {
   status?: string;
   auto_renew?: boolean | number;
   next_billing_date?: string | null;
+  [key: string]: unknown;
+}
+
+export interface SubscriptionReminderStatus {
+  should_remind?: boolean;
+  days_left?: number | null;
+  reminder_days?: number | null;
+  reminders_enabled?: boolean;
+  auto_renew?: boolean | number;
+  subscription_id?: number | string | null;
+  expire_date?: string | null;
+  channels?: {
+    email?: boolean;
+    sms?: boolean;
+    telegram?: boolean;
+    [key: string]: unknown;
+  } | null;
+  [key: string]: unknown;
+}
+
+export interface PosAccessCredentials {
+  pos_url: string;
+  username: string;
+  password: string;
+  email: string;
+  [key: string]: unknown;
+}
+
+export interface PosAccessInfo {
+  has_subscription: boolean;
+  locked: boolean;
+  reason?: string | null;
+  message: string;
+  access: PosAccessCredentials | null;
+  subscription: CurrentSubscription | null;
   [key: string]: unknown;
 }
 
@@ -189,6 +290,10 @@ export class ApiError extends Error {
     this.code = code;
     this.data = data;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 const REGISTER_LIMITS: Record<string, string> = {
@@ -353,35 +458,83 @@ async function apiRequest<T>(
     query,
   }: RequestOptions = {},
 ): Promise<T> {
-  const params = query || {};
-  let res: any;
+  const token = getStoredAuthToken();
+  const requestHeaders = new Headers(headers);
 
-  if (method === "GET") {
-    res = await get({ endpoint: path, params, method: "GET" });
-  } else {
-    res = await post({ endpoint: path, data: body, params, method });
+  if (token && !requestHeaders.has("token")) {
+    requestHeaders.set("token", token);
   }
 
-  if (res && typeof res === "object") {
-    if ("code" in res) {
-      const apiPayload = res as ApiEnvelope<T>;
-      if (apiPayload.code === 1) {
-        return apiPayload.data;
-      }
-
-      if (apiPayload.code === 401) {
-        clearStoredAuthToken();
-      }
-
-      throw new ApiError(
-        apiPayload.msg || "Request failed",
-        apiPayload.code,
-        apiPayload.data,
+  let requestBody: BodyInit | undefined;
+  if (body !== undefined && method !== "GET") {
+    if (body instanceof FormData) {
+      requestBody = body;
+    } else if (requestHeaders.get("Content-Type") === "application/json") {
+      requestBody = JSON.stringify(body);
+    } else {
+      requestHeaders.set(
+        "Content-Type",
+        requestHeaders.get("Content-Type") ||
+          "application/x-www-form-urlencoded",
       );
+
+      const urlSearchParams = new URLSearchParams();
+      if (isRecord(body)) {
+        Object.entries(body).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            urlSearchParams.append(key, String(value));
+          }
+        });
+      }
+      requestBody = urlSearchParams.toString();
     }
   }
 
-  return res as T;
+  const response = await fetch(buildUrl(path, query), {
+    method,
+    headers: requestHeaders,
+    body: requestBody,
+  });
+  const payload = await readResponseBody(response);
+
+  if (response.status === 401) {
+    throw createUnauthorizedError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Unauthorized",
+      payload,
+    );
+  }
+
+  if (response.status === 204) {
+    return null as T;
+  }
+
+  if (!response.ok) {
+    throw createApiError("Request failed", response, payload);
+  }
+
+  if (isRecord(payload) && typeof payload.code === "number") {
+    const apiPayload = payload as ApiEnvelope<T>;
+    if (apiPayload.code === 1) {
+      return apiPayload.data;
+    }
+
+    if (apiPayload.code === 401) {
+      throw createUnauthorizedError(
+        apiPayload.msg || "Unauthorized",
+        apiPayload.data,
+      );
+    }
+
+    throw new ApiError(
+      apiPayload.msg || "Request failed",
+      apiPayload.code,
+      apiPayload.data,
+    );
+  }
+
+  return payload as T;
 }
 
 function tryParseJson(rawText: string) {
@@ -392,24 +545,336 @@ function tryParseJson(rawText: string) {
   }
 }
 
+async function readResponseBody(response: Response) {
+  const rawText = await response.text();
+  if (!rawText) {
+    return null;
+  }
+
+  return tryParseJson(rawText);
+}
+
+function extractNestedUserinfo<T extends Record<string, unknown>>(
+  value: unknown,
+): T | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if (isRecord(value.vendor)) {
+    return value.vendor as T;
+  }
+
+  if (isRecord(value.userinfo)) {
+    return value.userinfo as T;
+  }
+
+  if (isRecord(value.user)) {
+    return value.user as T;
+  }
+
+  return value as T;
+}
+
+function isAuthUserLikeRecord(value: unknown): value is AuthUser {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return [
+    "id",
+    "type",
+    "username",
+    "nickname",
+    "name",
+    "email",
+    "mobile",
+    "phone",
+    "avatar",
+    "subscription_status",
+    "current_package",
+  ].some((key) => key in value);
+}
+
+function extractTokenFromRecord(value: unknown) {
+  if (!isRecord(value)) {
+    return "";
+  }
+
+  const token = value.token;
+  return typeof token === "string" && token.trim() !== "" ? token.trim() : "";
+}
+
+function extractAuthToken(payload: VerifyOtpResponse | null | undefined) {
+  if (!payload) {
+    return "";
+  }
+
+  if (typeof payload.token === "string" && payload.token.trim() !== "") {
+    return payload.token.trim();
+  }
+
+  const nestedToken =
+    extractTokenFromRecord(payload.vendor) ||
+    extractTokenFromRecord(payload.userinfo) ||
+    extractTokenFromRecord(payload.user) ||
+    extractTokenFromRecord(payload);
+
+  if (nestedToken) {
+    return nestedToken;
+  }
+
+  return "";
+}
+
+function extractAuthUserinfo(payload: VerifyOtpResponse | null | undefined) {
+  if (!payload) {
+    return null;
+  }
+
+  if (payload.vendor && isRecord(payload.vendor)) {
+    return payload.vendor as AuthUser;
+  }
+
+  if (payload.userinfo && isRecord(payload.userinfo)) {
+    return payload.userinfo as AuthUser;
+  }
+
+  if (payload.user && isRecord(payload.user)) {
+    return payload.user as AuthUser;
+  }
+
+  if (isAuthUserLikeRecord(payload)) {
+    return payload as AuthUser;
+  }
+
+  return null;
+}
+
+function persistAuthSession(payload: VerifyOtpResponse | null | undefined) {
+  const token = extractAuthToken(payload);
+  const userinfo = extractAuthUserinfo(payload);
+
+  if (token) {
+    setStoredAuthToken(token);
+  }
+
+  if (userinfo) {
+    setStoredUserinfo(userinfo);
+  }
+}
+
+function setStoredUserinfo(userinfo: unknown) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (userinfo === null || userinfo === undefined) {
+    window.localStorage.removeItem(USER_INFO_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(USER_INFO_KEY, JSON.stringify(userinfo));
+}
+
+function buildAuthenticatedHeaders(
+  extraHeaders: Record<string, string> = {},
+) {
+  return {
+    ...extraHeaders,
+    token: getStoredAuthToken() || "",
+  };
+}
+
+function isProfileApiDebugEnabled() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return window.localStorage.getItem(PROFILE_API_DEBUG_KEY) === "1";
+}
+
+function logProfileApiDebug(label: string, value?: unknown) {
+  if (!isProfileApiDebugEnabled()) {
+    return;
+  }
+
+  if (value === undefined) {
+    console.log(label);
+    return;
+  }
+
+  console.log(label, value);
+}
+
+function createUnauthorizedError(message = "Unauthorized", data: unknown = null) {
+  clearStoredAuthToken();
+  return new ApiError(message, 401, data);
+}
+
+function createApiError(
+  fallbackMessage: string,
+  response: Response,
+  payload: unknown,
+) {
+  if (isRecord(payload)) {
+    const message =
+      typeof payload.msg === "string" && payload.msg.trim() !== ""
+        ? payload.msg
+        : fallbackMessage;
+    const code =
+      typeof payload.code === "number" ? payload.code : response.status || 500;
+    return new ApiError(message, code, "data" in payload ? payload.data : payload);
+  }
+
+  return new ApiError(
+    fallbackMessage,
+    response.status || 500,
+    payload,
+  );
+}
+
+function extractUploadPath(payload: unknown): string {
+  if (typeof payload === "string" && payload.trim() !== "") {
+    return payload.trim();
+  }
+
+  if (!isRecord(payload)) {
+    return "";
+  }
+
+  const candidateKeys = [
+    "url",
+    "path",
+    "avatar",
+    "filepath",
+    "file_path",
+    "savepath",
+    "src",
+    "fullurl",
+  ];
+
+  for (const key of candidateKeys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+
+  return "";
+}
+
+function getFirstStringValue(
+  record: Record<string, unknown>,
+  keys: string[],
+) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+
+  return "";
+}
+
+function extractPublicSiteSettings(data: unknown): PublicSiteSettings {
+  if (!isRecord(data)) {
+    return {};
+  }
+
+  const candidateRecords = [
+    data,
+    isRecord(data.settings) ? data.settings : null,
+    isRecord(data.config) ? data.config : null,
+  ].filter(Boolean) as Record<string, unknown>[];
+  const mergedRecord = candidateRecords.reduce<Record<string, unknown>>(
+    (accumulator, record) => ({
+      ...accumulator,
+      ...record,
+    }),
+    {},
+  );
+
+  return {
+    ...mergedRecord,
+    pos_demo_video_url: getFirstStringValue(mergedRecord, [
+      "pos_demo_video_url",
+      "demo_video_url",
+      "watch_demo_url",
+      "video_demo_url",
+      "video_url",
+    ]),
+    free_trial_coupon_code: getFirstStringValue(mergedRecord, [
+      "free_trial_coupon_code",
+      "start_free_trial_coupon_code",
+      "trial_coupon_code",
+      "free_coupon_code",
+    ]),
+    terms_of_service_content: getFirstStringValue(mergedRecord, [
+      "terms_of_service_content",
+      "terms_content",
+      "terms_conditions_content",
+      "terms_and_conditions_content",
+    ]),
+    terms_of_service_updated_at: getFirstStringValue(mergedRecord, [
+      "terms_of_service_updated_at",
+      "terms_updated_at",
+      "terms_last_updated",
+      "terms_of_service_last_updated",
+    ]),
+    privacy_policy_content: getFirstStringValue(mergedRecord, [
+      "privacy_policy_content",
+      "privacy_content",
+    ]),
+    privacy_policy_updated_at: getFirstStringValue(mergedRecord, [
+      "privacy_policy_updated_at",
+      "privacy_updated_at",
+      "privacy_last_updated",
+      "privacy_policy_last_updated",
+    ]),
+  };
+}
+
 export function getStoredAuthToken() {
   if (typeof window === "undefined") {
     return "";
   }
 
-  return window.localStorage.getItem(AUTH_TOKEN_KEY) || "";
+  return (
+    window.localStorage.getItem(AUTH_TOKEN_KEY) ||
+    window.localStorage.getItem(LEGACY_AUTH_TOKEN_KEY) ||
+    ""
+  );
 }
 
 export function setStoredAuthToken(token: string) {
   if (typeof window !== "undefined") {
     window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+    window.localStorage.setItem(LEGACY_AUTH_TOKEN_KEY, token);
   }
 }
 
 export function clearStoredAuthToken() {
   if (typeof window !== "undefined") {
     window.localStorage.removeItem(AUTH_TOKEN_KEY);
+    window.localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+    window.localStorage.removeItem(USER_INFO_KEY);
   }
+}
+
+export function isUnauthorizedError(error: unknown) {
+  return error instanceof ApiError && error.code === 401;
+}
+
+export function normalizeProfileAvatarUrl(value?: string | null) {
+  const trimmedValue = (value || "").trim();
+
+  if (!trimmedValue || trimmedValue === "null") {
+    return "";
+  }
+
+  return trimmedValue;
 }
 
 export function getErrorMessage(error: unknown) {
@@ -543,9 +1008,7 @@ export async function verifyOtp(phone: string, otp: string) {
     body: { phone, otp },
   });
 
-  if (data?.token) {
-    setStoredAuthToken(data.token);
-  }
+  persistAuthSession(data);
 
   return data;
 }
@@ -556,9 +1019,7 @@ export async function loginWithGoogle(idToken: string) {
     body: { id_token: idToken },
   });
 
-  if (data?.token) {
-    setStoredAuthToken(data.token);
-  }
+  persistAuthSession(data);
 
   return data;
 }
@@ -569,9 +1030,18 @@ export async function loginWithTelegram(payload: TelegramAuthPayload) {
     body: payload,
   });
 
-  if (data?.token) {
-    setStoredAuthToken(data.token);
-  }
+  persistAuthSession(data);
+
+  return data;
+}
+
+export async function loginWithEmail(payload: Record<string, unknown>) {
+  const data = await apiRequest<VerifyOtpResponse>("/auth/email", {
+    method: "POST",
+    body: payload,
+  });
+
+  persistAuthSession(data);
 
   return data;
 }
@@ -594,9 +1064,24 @@ export async function getMe() {
   }
 
   try {
-    return await apiRequest<AuthUser>("/auth/me", {
+    const data = await apiRequest<unknown>("/auth/me", {
       requiresAuth: true,
     });
+    const account = extractAuthUserinfo(
+      isRecord(data) ? (data as VerifyOtpResponse) : undefined,
+    );
+
+    if (account) {
+      setStoredUserinfo(account);
+      return account;
+    }
+
+    if (isAuthUserLikeRecord(data)) {
+      setStoredUserinfo(data);
+      return data;
+    }
+
+    return null;
   } catch (error) {
     if (error instanceof ApiError && error.code === 401) {
       return null;
@@ -607,21 +1092,451 @@ export async function getMe() {
 }
 
 export async function getProfile() {
-  return apiRequest<UserProfile>("/profile", {
-    requiresAuth: true,
+  const token = getStoredAuthToken();
+  const requestUrl = buildUrl("/user/profile");
+
+  logProfileApiDebug("[Profile GET] url:", requestUrl);
+  logProfileApiDebug("[Profile GET] method:", "GET");
+  logProfileApiDebug("[Profile GET] token exists:", Boolean(token));
+
+  const response = await fetch(requestUrl, {
+    method: "GET",
+    headers: {
+      token: token || "",
+    },
   });
+  const payload = await readResponseBody(response);
+
+  logProfileApiDebug("[Profile GET] status:", response.status);
+  logProfileApiDebug("[Profile GET] response:", payload);
+
+  if (response.status === 401) {
+    throw createUnauthorizedError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Unauthorized",
+      payload,
+    );
+  }
+
+  if (!response.ok) {
+    throw createApiError("Failed to get profile", response, payload);
+  }
+
+  if (!isRecord(payload) || payload.code !== 1) {
+    if (isRecord(payload) && payload.code === 401) {
+      throw createUnauthorizedError(
+        typeof payload.msg === "string" ? payload.msg : "Unauthorized",
+        payload,
+      );
+    }
+
+    throw new ApiError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Failed to get profile",
+      isRecord(payload) && typeof payload.code === "number"
+        ? payload.code
+        : response.status || 500,
+      isRecord(payload) && "data" in payload ? payload.data : payload,
+    );
+  }
+
+  const userinfo = extractNestedUserinfo<UserProfile>(payload.data);
+  if (!userinfo) {
+    throw new ApiError("Profile data is missing", 500, payload.data);
+  }
+
+  setStoredUserinfo(userinfo);
+  return userinfo;
 }
 
-export async function updateProfile(profile: UserProfile) {
-  return apiRequest<UserProfile>("/profile/update", {
+export async function uploadProfileAvatar(file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(buildUrl("/common/upload"), {
     method: "POST",
-    requiresAuth: true,
-    body: profile,
+    headers: buildAuthenticatedHeaders(),
+    body: formData,
   });
+  const payload = await readResponseBody(response);
+
+  if (response.status === 401) {
+    throw createUnauthorizedError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Unauthorized",
+      payload,
+    );
+  }
+
+  if (!response.ok) {
+    throw createApiError("Failed to upload avatar", response, payload);
+  }
+
+  if (!isRecord(payload) || payload.code !== 1) {
+    if (isRecord(payload) && payload.code === 401) {
+      throw createUnauthorizedError(
+        typeof payload.msg === "string" ? payload.msg : "Unauthorized",
+        payload,
+      );
+    }
+
+    throw new ApiError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Failed to upload avatar",
+      isRecord(payload) && typeof payload.code === "number"
+        ? payload.code
+        : response.status || 500,
+      isRecord(payload) && "data" in payload ? payload.data : payload,
+    );
+  }
+
+  const avatarPath = extractUploadPath(payload.data);
+  if (!avatarPath) {
+    throw new ApiError("Avatar upload did not return a file path", 500, payload.data);
+  }
+
+  return avatarPath;
+}
+
+export async function updateProfile(profile: UpdateProfilePayload) {
+  const cleanPayload: UpdateProfilePayload = { ...profile };
+  const token = getStoredAuthToken();
+
+  if (!cleanPayload.avatar || cleanPayload.avatar.trim() === "") {
+    delete cleanPayload.avatar;
+  }
+
+  const requestUrl = buildUrl("/user/profile");
+
+  logProfileApiDebug("[Profile POST] url:", requestUrl);
+  logProfileApiDebug("[Profile POST] method:", "POST");
+  logProfileApiDebug("[Profile POST] token exists:", Boolean(token));
+  logProfileApiDebug(
+    "[Profile POST] avatar included:",
+    Object.prototype.hasOwnProperty.call(cleanPayload, "avatar"),
+  );
+  logProfileApiDebug("[Profile POST] payload:", cleanPayload);
+
+  const response = await fetch(requestUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      token: token || "",
+    },
+    body: JSON.stringify(cleanPayload),
+  });
+  const payload = await readResponseBody(response);
+
+  logProfileApiDebug("[Profile POST] status:", response.status);
+  logProfileApiDebug("[Profile POST] response:", payload);
+
+  if (response.status === 401) {
+    throw createUnauthorizedError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Unauthorized",
+      payload,
+    );
+  }
+
+  if (!response.ok) {
+    throw createApiError("Failed to update profile", response, payload);
+  }
+
+  if (!isRecord(payload) || payload.code !== 1) {
+    if (isRecord(payload) && payload.code === 401) {
+      throw createUnauthorizedError(
+        typeof payload.msg === "string" ? payload.msg : "Unauthorized",
+        payload,
+      );
+    }
+
+    throw new ApiError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Failed to update profile",
+      isRecord(payload) && typeof payload.code === "number"
+        ? payload.code
+        : response.status || 500,
+      isRecord(payload) && "data" in payload ? payload.data : payload,
+    );
+  }
+
+  const userinfo = extractNestedUserinfo<UserProfile>(payload.data);
+  if (!userinfo) {
+    throw new ApiError("Profile update response is missing user data", 500, payload.data);
+  }
+
+  setStoredUserinfo(userinfo);
+  return userinfo;
 }
 
 export async function getCurrentSubscription() {
   return apiRequest<CurrentSubscription | null>("/subscriptions/current", {
+    requiresAuth: true,
+  });
+}
+
+function getBooleanFlag(
+  record: Record<string, unknown>,
+  keys: string[],
+  fallback = false,
+) {
+  for (const key of keys) {
+    const value = record[key];
+
+    if (typeof value === "boolean") {
+      return value;
+    }
+
+    if (typeof value === "number") {
+      return value === 1;
+    }
+
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (["1", "true", "yes", "enabled"].includes(normalized)) {
+        return true;
+      }
+      if (["0", "false", "no", "disabled"].includes(normalized)) {
+        return false;
+      }
+    }
+  }
+
+  return fallback;
+}
+
+function normalizePosAccessInfo(data: unknown): PosAccessInfo {
+  if (!isRecord(data)) {
+    return {
+      has_subscription: false,
+      locked: true,
+      reason: null,
+      message: "Please subscribe to a package to unlock POS access",
+      access: null,
+      subscription: null,
+    };
+  }
+
+  const accessRecord =
+    (isRecord(data.access) ? data.access : null) ||
+    (isRecord(data.pos_access) ? data.pos_access : null) ||
+    (isRecord(data.credentials) ? data.credentials : null);
+  const subscriptionRecord =
+    (isRecord(data.subscription) ? data.subscription : null) ||
+    (isRecord(data.current_subscription) ? data.current_subscription : null);
+  const hasSubscription = getBooleanFlag(
+    data,
+    ["has_subscription", "hasSubscription"],
+    Boolean(subscriptionRecord),
+  );
+  const locked = getBooleanFlag(
+    data,
+    ["locked", "is_locked"],
+    !hasSubscription || !accessRecord,
+  );
+  const reason = getFirstStringValue(data, ["reason", "lock_reason"]) || null;
+  const isDisabled = locked || !hasSubscription || reason === "expired";
+  const normalizedAccess = accessRecord
+    ? {
+        ...accessRecord,
+        pos_url: getFirstStringValue(accessRecord, [
+          "pos_url",
+          "url",
+          "posUrl",
+          "login_url",
+        ]),
+        username: getFirstStringValue(accessRecord, [
+          "username",
+          "login",
+          "user_name",
+        ]),
+        password: getFirstStringValue(accessRecord, [
+          "password",
+          "plain_password",
+          "pos_password",
+        ]),
+        email: getFirstStringValue(accessRecord, [
+          "email",
+          "login_email",
+          "pos_email",
+        ]),
+      }
+    : null;
+
+  return {
+    ...data,
+    has_subscription: hasSubscription,
+    locked: isDisabled,
+    reason,
+    message:
+      getFirstStringValue(data, ["message", "notice", "error"]) ||
+      "Please subscribe to a package to unlock POS access",
+    access: isDisabled ? null : normalizedAccess,
+    subscription: subscriptionRecord
+      ? (subscriptionRecord as CurrentSubscription)
+      : null,
+  };
+}
+
+function extractPosAccessPassword(data: unknown) {
+  if (!isRecord(data)) {
+    return "";
+  }
+
+  if (isRecord(data.access)) {
+    return getFirstStringValue(data.access, [
+      "password",
+      "plain_password",
+      "pos_password",
+    ]);
+  }
+
+  if (isRecord(data.credentials)) {
+    return getFirstStringValue(data.credentials, [
+      "password",
+      "plain_password",
+      "pos_password",
+    ]);
+  }
+
+  return getFirstStringValue(data, [
+    "password",
+    "plain_password",
+    "pos_password",
+  ]);
+}
+
+export async function getPosAccessInfo() {
+  const data = await apiRequest<unknown>("/pos_access_info", {
+    requiresAuth: true,
+  });
+
+  return normalizePosAccessInfo(data);
+}
+
+export async function regeneratePosAccessPassword() {
+  return apiRequest<unknown>("/posaccessinfo/regeneratepassword", {
+    method: "POST",
+    requiresAuth: true,
+  });
+}
+
+export async function revealPosAccessPassword() {
+  try {
+    const data = await apiRequest<unknown>("/posaccessinfo/revealpassword", {
+      method: "POST",
+      requiresAuth: true,
+    });
+    const password = extractPosAccessPassword(data);
+    if (password) {
+      return password;
+    }
+  } catch (error) {
+    if (!(error instanceof ApiError) || (error.code !== 404 && error.code !== 405)) {
+      throw error;
+    }
+  }
+
+  const fallbackData = await apiRequest<unknown>("/posaccessinfo/revealpassword", {
+    method: "GET",
+    requiresAuth: true,
+  });
+  const fallbackPassword = extractPosAccessPassword(fallbackData);
+
+  if (!fallbackPassword) {
+    throw new ApiError(
+      "POS reveal password response is missing the password value.",
+      500,
+      fallbackData,
+    );
+  }
+
+  return fallbackPassword;
+}
+
+export async function createPosLoginTicket() {
+  const data = await apiRequest<unknown>("/vendor/posloginticket", {
+    method: "POST",
+    requiresAuth: true,
+  });
+
+  const url =
+    (isRecord(data) && getFirstStringValue(data, ["url", "redirect_url"])) ||
+    "";
+
+  if (!url) {
+    throw new ApiError(
+      "POS login ticket response is missing the destination URL.",
+      500,
+      data,
+    );
+  }
+
+  return url;
+}
+
+export async function unsubscribeCurrentSubscription(subscriptionId?: number) {
+  const token = getStoredAuthToken();
+  const requestBody: Record<string, number> = {
+    auto_renew: 0,
+  };
+
+  if (subscriptionId) {
+    requestBody.subscription_id = subscriptionId;
+  }
+  const response = await fetch(buildUrl("/subscriptions/unsubscribe"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      token: token || "",
+    },
+    body: JSON.stringify(requestBody),
+  });
+  const payload = await readResponseBody(response);
+
+  if (response.status === 401) {
+    throw createUnauthorizedError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Unauthorized",
+      payload,
+    );
+  }
+
+  if (!response.ok) {
+    throw createApiError("Failed to update subscription", response, payload);
+  }
+
+  if (!isRecord(payload) || payload.code !== 1) {
+    if (isRecord(payload) && payload.code === 401) {
+      throw createUnauthorizedError(
+        typeof payload.msg === "string" ? payload.msg : "Unauthorized",
+        payload,
+      );
+    }
+
+    throw new ApiError(
+      isRecord(payload) && typeof payload.msg === "string"
+        ? payload.msg
+        : "Failed to update subscription",
+      isRecord(payload) && typeof payload.code === "number"
+        ? payload.code
+        : response.status || 500,
+      isRecord(payload) && "data" in payload ? payload.data : payload,
+    );
+  }
+
+  return payload.data;
+}
+
+export async function getSubscriptionReminderStatus() {
+  return apiRequest<SubscriptionReminderStatus>("/subscriptions/reminder-status", {
     requiresAuth: true,
   });
 }
@@ -641,7 +1556,7 @@ export async function createPaywayPayment(payload: {
   package_id: number;
   duration_id: number;
   coupon_code?: string;
-  payment_method: "khqr" | "card";
+  payment_method?: "khqr" | "card";
 }) {
   return apiRequest<PaywayCreateResponse>("/payments/paywaycreate", {
     method: "POST",
@@ -668,4 +1583,9 @@ export async function getPaymentStatus(transactionId: string) {
     requiresAuth: true,
     query: { tid: transactionId },
   });
+}
+
+export async function getPublicSiteSettings() {
+  const data = await apiRequest<unknown>(PUBLIC_SETTINGS_PATH || "/settings/public");
+  return extractPublicSiteSettings(data);
 }
