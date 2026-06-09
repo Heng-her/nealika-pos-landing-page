@@ -124,8 +124,8 @@ export default function LegalPage({
                 onClick={onOpenTerms}
                 className={`transition-colors ${
                   type === "terms"
-                    ? "text-blue-600 font-semibold"
-                    : "hover:text-blue-600"
+                    ? "text-blue-500 font-semibold"
+                    : "hover:text-blue-500"
                 }`}
               >
                 Terms of Service
@@ -134,8 +134,8 @@ export default function LegalPage({
                 onClick={onOpenPrivacy}
                 className={`transition-colors ${
                   type === "privacy"
-                    ? "text-blue-600 font-semibold"
-                    : "hover:text-blue-600"
+                    ? "text-blue-500 font-semibold"
+                    : "hover:text-blue-500"
                 }`}
               >
                 Privacy Policy

@@ -1407,7 +1407,7 @@ export default function CheckoutPage({
                   <button
                     type="button"
                     onClick={onOpenTerms}
-                    className="text-blue-600 hover:underline"
+                    className="text-blue-500 hover:underline"
                   >
                     Terms of Service
                   </button>{" "}
@@ -1415,7 +1415,7 @@ export default function CheckoutPage({
                   <button
                     type="button"
                     onClick={onOpenPrivacy}
-                    className="text-blue-600 hover:underline"
+                    className="text-blue-500 hover:underline"
                   >
                     Privacy Policy
                   </button>
