@@ -1122,16 +1122,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>Subscription Expiring Soon</AlertDialogTitle>
             <AlertDialogDescription>
-              {expiryReminder ? (
-                <>
-                  Your {expiryReminder.packageName} plan expires in {expiryReminder.daysRemaining} day{expiryReminder.daysRemaining === 1 ? "" : "s"} on <strong>{expiryReminder.expiryDateLabel}</strong>. Continue your plan now to avoid interruption.
-                  {expiryReminder.channels.length ? (
-                    <> We will also remind you by {expiryReminder.channels.join(", ")}.</>
-                  ) : null}
-                </>
-              ) : (
-                "Your subscription expires soon. Continue your plan now to avoid interruption."
-              )}
+              {expiryReminder
+                ? `Your ${expiryReminder.packageName} plan expires in ${expiryReminder.daysRemaining} day${expiryReminder.daysRemaining === 1 ? "" : "s"} on ${expiryReminder.expiryDateLabel}. Continue your plan now to avoid interruption.${expiryReminder.channels.length ? ` We will also remind you by ${expiryReminder.channels.join(", ")}.` : ""}`
+                : "Your subscription expires soon. Continue your plan now to avoid interruption."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

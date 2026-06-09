@@ -1,8 +1,5 @@
 import { Check } from "lucide-react";
-import {
-  type DisplayPackage,
-  type CurrentSubscription,
-} from "../services/posApi";
+import { type DisplayPackage, type CurrentSubscription } from "../services/posApi";
 import { Switch } from "./ui/switch";
 
 interface PackagesPageProps {
@@ -185,6 +182,38 @@ export default function PackagesPage({
                   </p>
                 </div>
               </div>
+
+              {showReminderAlertSection ? (
+                <div className="mt-6 flex flex-col gap-4 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-base font-semibold text-slate-900">
+                      Alert Reminder
+                    </p>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Your subscription will automatically renew on expiry date.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 self-start sm:self-center">
+                    <span
+                      className={`text-sm font-semibold ${
+                        isReminderAlertEnabled
+                          ? "text-green-600"
+                          : "text-slate-500"
+                      }`}
+                    >
+                      {isReminderAlertEnabled ? "ON" : "OFF"}
+                    </span>
+                    <Switch
+                      checked={isReminderAlertEnabled}
+                      onCheckedChange={onToggleReminderAlert}
+                      disabled={isUpdatingSubscription}
+                      className="data-[state=checked]:!bg-green-600 data-[state=unchecked]:bg-slate-300"
+                      aria-label="Toggle expiry reminder alerts"
+                    />
+                  </div>
+                </div>
+              ) : null}
+
               <div
                 className={`${showReminderAlertSection ? "mt-4" : "mt-6"} p-3 bg-blue-50 border border-blue-200 rounded-lg`}
               >
@@ -211,36 +240,6 @@ export default function PackagesPage({
                   </>
                 )}
               </div>
-              {showReminderAlertSection ? (
-                <div className="flex flex-col gap-4 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    {/* <p className="text-base font-semibold text-slate-900">
-                      Alert Reminder
-                    </p> */}
-                    <p className="mt-1 text-sm text-slate-600">
-                      Your subscription will automatically renew on expiry date.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3 self-start sm:self-center">
-                    <span
-                      className={`text-sm font-semibold ${
-                        isReminderAlertEnabled
-                          ? "text-green-600"
-                          : "text-slate-500"
-                      }`}
-                    >
-                      {isReminderAlertEnabled ? "ON" : "OFF"}
-                    </span>
-                    <Switch
-                      checked={isReminderAlertEnabled}
-                      onCheckedChange={onToggleReminderAlert}
-                      disabled={isUpdatingSubscription}
-                      className="data-[state=checked]:!bg-green-600 data-[state=unchecked]:bg-slate-300"
-                      aria-label="Toggle expiry reminder alerts"
-                    />
-                  </div>
-                </div>
-              ) : null}
             </div>
           ) : (
             <div className="bg-white rounded-xl shadow-sm p-6">
@@ -310,7 +309,9 @@ export default function PackagesPage({
                         <span className="text-3xl font-bold text-slate-900">
                           ${service.price}
                         </span>
-                        <span className="text-slate-600">{service.period}</span>
+                        <span className="text-slate-600">
+                          {service.period}
+                        </span>
                       </div>
                       <p className="text-slate-600 text-sm mb-4">
                         {service.description}
@@ -437,8 +438,7 @@ export default function PackagesPage({
             </div>
           </div>
 
-          {selectedServiceDetail.id === subscribedPackageId &&
-          currentSubscription ? (
+          {selectedServiceDetail.id === subscribedPackageId && currentSubscription ? (
             <div className="border-t pt-6 mt-6">
               <h3 className="text-xl font-bold text-slate-900 mb-4">
                 Subscription Details
@@ -502,11 +502,11 @@ export default function PackagesPage({
                 isCurrentPackageAutoRenewEnabled
                   ? "bg-red-50 text-red-600 hover:bg-red-100"
                   : selectedServiceDetail.id === subscribedPackageId
-                    ? "bg-blue-600 text-white hover:bg-blue-700"
-                    : hasSubscribedPackage &&
-                        selectedServiceDetail.id < (subscribedPackageId || 0)
-                      ? "bg-slate-600 text-white hover:bg-slate-700"
-                      : "bg-blue-600 text-white hover:bg-blue-700"
+                  ? "bg-blue-600 text-white hover:bg-blue-700"
+                  : hasSubscribedPackage &&
+                      selectedServiceDetail.id < (subscribedPackageId || 0)
+                    ? "bg-slate-600 text-white hover:bg-slate-700"
+                    : "bg-blue-600 text-white hover:bg-blue-700"
               } disabled:cursor-not-allowed disabled:opacity-60`}
             >
               {selectedServiceDetail.id === subscribedPackageId &&
@@ -514,13 +514,13 @@ export default function PackagesPage({
                 ? "Unsubscribe from this Package"
                 : selectedServiceDetail.id === subscribedPackageId
                   ? "Subscribe to this Package"
+                : hasSubscribedPackage &&
+                    selectedServiceDetail.id > (subscribedPackageId || 0)
+                  ? "Upgrade to this Package"
                   : hasSubscribedPackage &&
-                      selectedServiceDetail.id > (subscribedPackageId || 0)
-                    ? "Upgrade to this Package"
-                    : hasSubscribedPackage &&
-                        selectedServiceDetail.id < (subscribedPackageId || 0)
-                      ? "Downgrade to this Package"
-                      : "Subscribe to this Package"}
+                      selectedServiceDetail.id < (subscribedPackageId || 0)
+                    ? "Downgrade to this Package"
+                    : "Subscribe to this Package"}
             </button>
           </div>
         </div>
