@@ -1036,15 +1036,16 @@ export default function CheckoutPage({
             </div>
 
             {isFreeTrialFlow || isZeroTotalCheckout ? (
-              <div className="bg-white rounded-xl shadow-sm p-6">
-                <h2 className="text-xl font-bold text-slate-900 mb-3">
-                  No Payment Needed
-                </h2>
-                <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-green-700">
-                  No payment method is needed for this checkout. Once the total
-                  is free, your plan will activate automatically.
-                </div>
-              </div>
+              // <div className="bg-white rounded-xl shadow-sm p-6">
+              //   <h2 className="text-xl font-bold text-slate-900 mb-3">
+              //     No Payment Needed
+              //   </h2>
+              //   <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-green-700">
+              //     No payment method is needed for this checkout. Once the total
+              //     is free, your plan will activate automatically.
+              //   </div>
+              // </div>
+              null
             ) : (
               <div className="bg-white rounded-xl shadow-sm p-6">
                 <h2 className="text-xl font-bold text-slate-900 mb-6">
