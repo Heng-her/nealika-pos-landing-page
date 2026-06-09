@@ -108,9 +108,9 @@ function getAbaPayway() {
   }
 
   try {
-    return window.eval('typeof AbaPayway !== "undefined" ? AbaPayway : undefined') as
-      | { checkout?: () => void }
-      | undefined;
+    return window.eval(
+      'typeof AbaPayway !== "undefined" ? AbaPayway : undefined',
+    ) as { checkout?: () => void } | undefined;
   } catch {
     return undefined;
   }
@@ -229,8 +229,9 @@ export default function CheckoutPage({
 
   const selectedDuration = useMemo(() => {
     return (
-      availableDurationOptions.find((option) => option.id === selectedDurationId) ||
-      null
+      availableDurationOptions.find(
+        (option) => option.id === selectedDurationId,
+      ) || null
     );
   }, [availableDurationOptions, selectedDurationId]);
 
@@ -249,7 +250,7 @@ export default function CheckoutPage({
     : isDowngrade
       ? "Downgrade"
       : "Subscribe";
-  const isZeroTotalCheckout = Boolean(quote) && quote.total <= 0;
+  const isZeroTotalCheckout = (quote?.total ?? 0) <= 0;
   const isFreeTrialActivation = isFreeTrialFlow && isZeroTotalCheckout;
   const requiresFreeTrialSupport = isFreeTrialFlow && !isZeroTotalCheckout;
   const submitButtonLabel = isFreeTrialActivation
@@ -670,7 +671,8 @@ export default function CheckoutPage({
     setPaymentError("");
 
     try {
-      const shouldSkipPayment = await shouldSkipPaymentForExistingSubscription();
+      const shouldSkipPayment =
+        await shouldSkipPaymentForExistingSubscription();
       if (shouldSkipPayment) {
         setIsProcessing(false);
         return;
@@ -1393,7 +1395,9 @@ export default function CheckoutPage({
                   {isZeroTotalCheckout
                     ? "Free access for "
                     : "One-time payment for "}
-                  {(selectedDuration?.name || "selected duration").toLowerCase()}
+                  {(
+                    selectedDuration?.name || "selected duration"
+                  ).toLowerCase()}
                 </p>
               </div>
 

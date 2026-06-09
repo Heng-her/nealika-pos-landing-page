@@ -323,129 +323,134 @@ function buildUrl(
   return url.toString();
 }
 
-const VITE_API_URL = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
+const VITE_API_URL = (
+  import.meta.env.VITE_API_URL ||
+  import.meta.env.VITE_API_BASE_URL ||
+  ""
+)
+  .trim()
+  .replace(/\/+$/, "");
 
 // Commented out as react-i18next is not installed in package.json to prevent build errors
 // import { useTranslation } from "react-i18next";
 
 export default async function post({
-    endpoint,
-    data,
-    params,
-    method = "POST",
+  endpoint,
+  data,
+  params,
+  method = "POST",
 }: {
-    endpoint: string;
-    data?: any | null;
-    params?: Record<string, any>;
-    method?: string;
+  endpoint: string;
+  data?: any | null;
+  params?: Record<string, any>;
+  method?: string;
 }) {
-    // Check if the URL is valid
-    if (!endpoint || typeof endpoint !== "string") {
-        throw new Error("Invalid URL");
+  // Check if the URL is valid
+  if (!endpoint || typeof endpoint !== "string") {
+    throw new Error("Invalid URL");
+  }
+
+  const lang = localStorage.getItem("lang") || "en";
+  params = {
+    ...params,
+    lang: lang,
+  };
+
+  if (!data && !params) {
+    return get({ endpoint, method });
+  }
+
+  if (!data && params) {
+    return get({ endpoint, params, method });
+  }
+
+  // Check if the data is valid
+  if (data !== null && typeof data !== "object") {
+    throw new Error("Invalid data");
+  }
+
+  if (params && typeof params !== "object") {
+    throw new Error("Invalid params");
+  }
+  const urlParams = new URLSearchParams(params).toString();
+  endpoint = urlParams ? `${endpoint}?${urlParams}` : endpoint;
+
+  const token = getStoredAuthToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/x-www-form-urlencoded",
+  };
+  if (token) {
+    headers["token"] = token;
+  }
+
+  try {
+    const bodyContent =
+      data instanceof FormData
+        ? data
+        : new URLSearchParams(data as Record<string, string>).toString();
+
+    const fetchHeaders = data instanceof FormData ? { ...headers } : headers;
+
+    if (data instanceof FormData) {
+      delete (fetchHeaders as any)["Content-Type"];
     }
 
-    const lang = localStorage.getItem("lang") || "en";
-    params = {
-        ...params,
-        "lang": lang,
-    }
-
-    if (!data && !params) {
-        return get({endpoint, method});
-    }
-
-    if (!data && params) {
-        return get({endpoint, params, method});
-    }
-
-    // Check if the data is valid
-    if (data !== null && typeof data !== "object") {
-        throw new Error("Invalid data");
-    }
-
-    if (params && typeof params !== "object") {
-        throw new Error("Invalid params");
-    }
-    const urlParams = new URLSearchParams(params).toString();
-    endpoint = urlParams ? `${endpoint}?${urlParams}` : endpoint;
-
-    const token = getStoredAuthToken();
-    const headers: Record<string, string> = {
-        "Content-Type": "application/x-www-form-urlencoded",
-    };
-    if (token) {
-        headers["token"] = token;
-    }
-
-    try {
-        const bodyContent = data instanceof FormData 
-            ? data 
-            : new URLSearchParams(data as Record<string, string>).toString();
-
-        const fetchHeaders = data instanceof FormData 
-            ? { ...headers } 
-            : headers;
-            
-        if (data instanceof FormData) {
-            delete (fetchHeaders as any)["Content-Type"];
-        }
-
-        return fetch(`${VITE_API_URL}${endpoint}`, {
-            method,
-            headers: fetchHeaders,
-            body: bodyContent,
-        }).then((res) => {
-            if (!res.ok) {
-                throw new Error(`HTTP error! status: ${res.status}`);
-            }
-            return res.json();
-        });
-    } catch (error) {
-        console.error("There was a problem with the fetch operation:", error);
-        return error;
-    }
+    return fetch(`${VITE_API_URL}${endpoint}`, {
+      method,
+      headers: fetchHeaders,
+      body: bodyContent,
+    }).then((res) => {
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+      return res.json();
+    });
+  } catch (error) {
+    console.error("There was a problem with the fetch operation:", error);
+    return error;
+  }
 }
 
 export async function get({
-    endpoint,
-    params,
-    method = "POST",
+  endpoint,
+  params,
+  method = "POST",
 }: {
-    endpoint: string;
-    params?: Record<string, any>;
-    method?: string;
+  endpoint: string;
+  params?: Record<string, any>;
+  method?: string;
 }) {
-    if (!endpoint || typeof endpoint !== "string") {
-        throw new Error("Invalid URL");
-    }
-    if (params && typeof params !== "object") {
-        throw new Error("Invalid params");
-    }
-    const urlParams = new URLSearchParams(params).toString();
-    endpoint = urlParams ? `${endpoint}?${urlParams}` : endpoint;
+  if (!endpoint || typeof endpoint !== "string") {
+    throw new Error("Invalid URL");
+  }
+  if (params && typeof params !== "object") {
+    throw new Error("Invalid params");
+  }
+  const urlParams = new URLSearchParams(params).toString();
+  endpoint = urlParams ? `${endpoint}?${urlParams}` : endpoint;
 
-    const token = getStoredAuthToken();
-    const headers: Record<string, string> = {
-        "Content-Type": "application/x-www-form-urlencoded",
-    };
-    if (token) {
-        headers["token"] = token;
-    }
+  const token = getStoredAuthToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/x-www-form-urlencoded",
+  };
+  if (token) {
+    headers["token"] = token;
+  }
 
-    try {
-        return fetch(`${VITE_API_URL}${endpoint}`, {
-            method,
-            headers,
-        }).then((res) => {
-            if (!res.ok) {
-                throw new Error(`HTTP error! status: ${res.status}`);
-            }
-            return res.json();
-        });
-    } catch (error) {
-        console.error("There was a problem with the fetch operation:", error);
-        return error;
-    }
+  try {
+    return fetch(`${VITE_API_URL}${endpoint}`, {
+      method,
+      headers,
+    }).then((res) => {
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+      return res.json();
+    });
+  } catch (error) {
+    console.error("There was a problem with the fetch operation:", error);
+    return error;
+  }
 }
 
 async function apiRequest<T>(
@@ -513,9 +518,8 @@ async function apiRequest<T>(
   if (!response.ok) {
     throw createApiError("Request failed", response, payload);
   }
-
   if (isRecord(payload) && typeof payload.code === "number") {
-    const apiPayload = payload as ApiEnvelope<T>;
+    const apiPayload = payload as unknown as ApiEnvelope<T>;
     if (apiPayload.code === 1) {
       return apiPayload.data;
     }
@@ -677,9 +681,7 @@ function setStoredUserinfo(userinfo: unknown) {
   window.localStorage.setItem(USER_INFO_KEY, JSON.stringify(userinfo));
 }
 
-function buildAuthenticatedHeaders(
-  extraHeaders: Record<string, string> = {},
-) {
+function buildAuthenticatedHeaders(extraHeaders: Record<string, string> = {}) {
   return {
     ...extraHeaders,
     token: getStoredAuthToken() || "",
@@ -707,7 +709,10 @@ function logProfileApiDebug(label: string, value?: unknown) {
   console.log(label, value);
 }
 
-function createUnauthorizedError(message = "Unauthorized", data: unknown = null) {
+function createUnauthorizedError(
+  message = "Unauthorized",
+  data: unknown = null,
+) {
   clearStoredAuthToken();
   return new ApiError(message, 401, data);
 }
@@ -724,14 +729,14 @@ function createApiError(
         : fallbackMessage;
     const code =
       typeof payload.code === "number" ? payload.code : response.status || 500;
-    return new ApiError(message, code, "data" in payload ? payload.data : payload);
+    return new ApiError(
+      message,
+      code,
+      "data" in payload ? payload.data : payload,
+    );
   }
 
-  return new ApiError(
-    fallbackMessage,
-    response.status || 500,
-    payload,
-  );
+  return new ApiError(fallbackMessage, response.status || 500, payload);
 }
 
 function extractUploadPath(payload: unknown): string {
@@ -764,10 +769,7 @@ function extractUploadPath(payload: unknown): string {
   return "";
 }
 
-function getFirstStringValue(
-  record: Record<string, unknown>,
-  keys: string[],
-) {
+function getFirstStringValue(record: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = record[key];
     if (typeof value === "string" && value.trim() !== "") {
@@ -1196,7 +1198,11 @@ export async function uploadProfileAvatar(file: File) {
 
   const avatarPath = extractUploadPath(payload.data);
   if (!avatarPath) {
-    throw new ApiError("Avatar upload did not return a file path", 500, payload.data);
+    throw new ApiError(
+      "Avatar upload did not return a file path",
+      500,
+      payload.data,
+    );
   }
 
   return avatarPath;
@@ -1268,7 +1274,11 @@ export async function updateProfile(profile: UpdateProfilePayload) {
 
   const userinfo = extractNestedUserinfo<UserProfile>(payload.data);
   if (!userinfo) {
-    throw new ApiError("Profile update response is missing user data", 500, payload.data);
+    throw new ApiError(
+      "Profile update response is missing user data",
+      500,
+      payload.data,
+    );
   }
 
   setStoredUserinfo(userinfo);
@@ -1438,15 +1448,21 @@ export async function revealPosAccessPassword() {
       return password;
     }
   } catch (error) {
-    if (!(error instanceof ApiError) || (error.code !== 404 && error.code !== 405)) {
+    if (
+      !(error instanceof ApiError) ||
+      (error.code !== 404 && error.code !== 405)
+    ) {
       throw error;
     }
   }
 
-  const fallbackData = await apiRequest<unknown>("/posaccessinfo/revealpassword", {
-    method: "GET",
-    requiresAuth: true,
-  });
+  const fallbackData = await apiRequest<unknown>(
+    "/posaccessinfo/revealpassword",
+    {
+      method: "GET",
+      requiresAuth: true,
+    },
+  );
   const fallbackPassword = extractPosAccessPassword(fallbackData);
 
   if (!fallbackPassword) {
@@ -1536,9 +1552,12 @@ export async function unsubscribeCurrentSubscription(subscriptionId?: number) {
 }
 
 export async function getSubscriptionReminderStatus() {
-  return apiRequest<SubscriptionReminderStatus>("/subscriptions/reminder-status", {
-    requiresAuth: true,
-  });
+  return apiRequest<SubscriptionReminderStatus>(
+    "/subscriptions/reminder-status",
+    {
+      requiresAuth: true,
+    },
+  );
 }
 
 export async function getCheckoutQuote(payload: {
@@ -1586,6 +1605,8 @@ export async function getPaymentStatus(transactionId: string) {
 }
 
 export async function getPublicSiteSettings() {
-  const data = await apiRequest<unknown>(PUBLIC_SETTINGS_PATH || "/settings/public");
+  const data = await apiRequest<unknown>(
+    PUBLIC_SETTINGS_PATH || "/settings/public",
+  );
   return extractPublicSiteSettings(data);
 }
